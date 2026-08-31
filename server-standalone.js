@@ -1,0 +1,1089 @@
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const querystring = require('querystring');
+
+const PORT = process.env.PORT || 3000;
+const DB_FILE = path.join(__dirname, 'db', 'autohitmaster.json');
+const PUBLIC_DIR = path.join(__dirname, 'public');
+const SECRET_KEY = 'autohitmaster_node_secret_key_2026_super_secure';
+
+if (!fs.existsSync(path.dirname(DB_FILE))) {
+  fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
+}
+
+function hashPassword(password) {
+  return crypto.createHmac('sha256', SECRET_KEY).update(password).digest('hex');
+}
+
+function loadDb() {
+  if (!fs.existsSync(DB_FILE)) {
+    const initial = {
+      admins: [
+        {
+          id: 1,
+          username: 'admin',
+          password_hash: '4a3079c80425b68d2ad6ef3c56bd4e9bc35919494f41d9fcf4d1c7dba8ef352a',
+          created_at: new Date().toISOString()
+        }
+      ],
+      users: [],
+      payment_requests: [],
+      logs: []
+    };
+    fs.writeFileSync(DB_FILE, JSON.stringify(initial, null, 2));
+    return initial;
+  }
+  try {
+    const data = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+    if (!data.users) data.users = [];
+    if (!data.payment_requests) data.payment_requests = [];
+    if (!data.settings) {
+      data.settings = {
+        gemini_keys: [],
+        groq_keys: [],
+        default_provider: 'gemini'
+      };
+    }
+    data.users.forEach(u => {
+      if (u.payment_amount === undefined) u.payment_amount = '';
+      if (u.payment_note === undefined) u.payment_note = '';
+    });
+    return data;
+  } catch (e) {
+    return { admins: [], users: [], payment_requests: [], logs: [] };
+  }
+}
+
+function saveDb(dbData) {
+  fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2));
+}
+
+const SESSIONS = {};
+
+const server = http.createServer((req, res) => {
+  const reqUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const pathname = reqUrl.pathname;
+
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, HEAD, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-AHM-HWID');
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(200);
+    return res.end();
+  }
+
+  function sendJson(data, code = 200) {
+    res.writeHead(code, { 'Content-Type': 'application/json' });
+    if (req.method === 'HEAD') return res.end();
+    res.end(JSON.stringify(data));
+  }
+
+  function sendHtml(html, code = 200, cookieHdr = null) {
+    const headers = { 'Content-Type': 'text/html; charset=utf-8' };
+    if (cookieHdr) headers['Set-Cookie'] = cookieHdr;
+    res.writeHead(code, headers);
+    if (req.method === 'HEAD') return res.end();
+    res.end(html);
+  }
+
+  function redirect(location, cookieHdr = null) {
+    const headers = { 'Location': location };
+    if (cookieHdr) headers['Set-Cookie'] = cookieHdr;
+    res.writeHead(302, headers);
+    res.end();
+  }
+
+  function getSessionAdmin() {
+    const cookieHeader = req.headers.cookie || '';
+    if (cookieHeader.includes('session_id=')) {
+      const sid = cookieHeader.split('session_id=')[1].split(';')[0].trim();
+      return SESSIONS[sid];
+    }
+    return null;
+  }
+
+  function readBody(cb) {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        if (req.headers['content-type'] && req.headers['content-type'].includes('application/json')) {
+          cb(null, JSON.parse(body || '{}'));
+        } else {
+          cb(null, querystring.parse(body));
+        }
+      } catch (e) {
+        cb(e, {});
+      }
+    });
+  }
+
+  if (pathname === '/logo.png') {
+    const logoPath = path.join(PUBLIC_DIR, 'logo.png');
+    if (fs.existsSync(logoPath)) {
+      res.writeHead(200, { 'Content-Type': 'image/png' });
+      if (req.method === 'HEAD') return res.end();
+      return fs.createReadStream(logoPath).pipe(res);
+    }
+  }
+
+  if (req.method === 'GET' || req.method === 'HEAD') {
+    if (pathname === '/' || pathname === '/admin') return redirect('/admin/dashboard');
+    if (pathname === '/admin/login') return renderLogin();
+    if (pathname === '/admin/logout') {
+      const cookieHeader = req.headers.cookie || '';
+      if (cookieHeader.includes('session_id=')) {
+        const sid = cookieHeader.split('session_id=')[1].split(';')[0].trim();
+        delete SESSIONS[sid];
+      }
+      return redirect('/admin/login', 'session_id=; Max-Age=0; Path=/');
+    }
+    if (pathname === '/admin/dashboard') {
+      const admin = getSessionAdmin();
+      if (!admin) return redirect('/admin/login');
+      return renderDashboard(admin);
+    }
+    if (pathname === '/admin/users') {
+      const admin = getSessionAdmin();
+      if (!admin) return redirect('/admin/login');
+      return renderUsers(admin, reqUrl.searchParams.get('msg'), reqUrl.searchParams.get('error'));
+    }
+    if (pathname === '/admin/users/create') {
+      const admin = getSessionAdmin();
+      if (!admin) return redirect('/admin/login');
+      return renderCreateUser(admin);
+    }
+    if (pathname === '/admin/settings') {
+      const admin = getSessionAdmin();
+      if (!admin) return redirect('/admin/login');
+      return renderSettings(admin, reqUrl.searchParams.get('msg'), reqUrl.searchParams.get('error'));
+    }
+    if (pathname === '/api/v1/config/ai-keys') {
+      const db = loadDb();
+      const settings = db.settings || {};
+      const geminiKeys = (settings.gemini_keys || []).filter(k => k && k.trim());
+      const groqKeys = (settings.groq_keys || []).filter(k => k && k.trim());
+
+      let selectedGemini = '';
+      if (geminiKeys.length > 0) {
+        selectedGemini = geminiKeys[keyIndex % geminiKeys.length];
+        keyIndex = (keyIndex + 1) % geminiKeys.length;
+      }
+
+      let selectedGroq = '';
+      if (groqKeys.length > 0) {
+        selectedGroq = groqKeys[Math.floor(Math.random() * groqKeys.length)];
+      }
+
+      return sendJson({
+        success: true,
+        default_provider: settings.default_provider || 'gemini',
+        gemini_key: selectedGemini,
+        groq_key: selectedGroq,
+        total_gemini_keys: geminiKeys.length,
+        total_groq_keys: groqKeys.length
+      });
+    }
+    if (pathname === '/admin/payments') {
+      const admin = getSessionAdmin();
+      if (!admin) return redirect('/admin/login');
+      return renderPayments(admin, reqUrl.searchParams.get('msg'), reqUrl.searchParams.get('error'));
+    }
+    if (pathname === '/api/v1/payment/status') {
+      const userId = (reqUrl.searchParams.get('user_id') || '').trim();
+      const db = loadDb();
+      const reqs = db.payment_requests.filter(r => r.user_id === userId);
+      const latest = reqs.length > 0 ? reqs[0] : null;
+      return sendJson({ success: true, latest_request: latest });
+    }
+  }
+
+  if (req.method === 'POST') {
+    // --- API ENDPOINTS ---
+    if (pathname === '/api/v1/license/verify' || pathname === '/api/v1/license/info') {
+      return readBody((err, body) => {
+        const key = (body.key || body.user_id || '').trim();
+        const fp = (body.fp || body.hwid || '').trim();
+
+        if (!key) {
+          return sendJson({ success: false, error: 'INVALID_KEY', message: 'Enter a User ID or License Key.' });
+        }
+
+        const db = loadDb();
+        const user = db.users.find(u => u.user_id === key);
+
+        if (!user) {
+          return sendJson({ success: false, error: 'INVALID_KEY', message: 'License key does not exist.' });
+        }
+
+        if (user.status !== 'active') {
+          return sendJson({ success: false, error: 'SUSPENDED', message: 'Account is suspended.' });
+        }
+
+        const now = new Date();
+        const expDt = new Date(user.expires_at);
+        if (now > expDt) {
+          return sendJson({ success: false, error: 'EXPIRED', message: 'License has expired.' });
+        }
+
+        if (fp) {
+          if (!user.hwid) {
+            user.hwid = fp;
+            saveDb(db);
+          } else if (user.hwid !== fp) {
+            return sendJson({ success: false, error: 'BROWSER_LIMIT_REACHED', message: 'Account is bound to another PC.' });
+          }
+        }
+
+        const daysLeft = Math.max(0, Math.ceil((expDt - now) / (1000 * 60 * 60 * 24)));
+
+        return sendJson({
+          success: true,
+          autofill_enabled: true,
+          user_name: user.name || user.user_id,
+          plan: 'Pro Lifetime',
+          expires_at: user.expires_at,
+          remaining_days: daysLeft,
+          autofill_browser_limit: 1,
+          autofill_browser_used: 1
+        });
+      });
+    }
+
+    if (pathname === '/api/v1/payment/request') {
+      return readBody((err, body) => {
+        const userId = (body.user_id || '').trim();
+        const senderMobile = (body.sender_mobile || '').trim();
+        const method = (body.method || 'bKash').trim();
+        const trxId = (body.trx_id || '').trim();
+        const amount = (body.amount || '').trim();
+        const requestedDays = parseInt(body.requested_days, 10) || 30;
+
+        if (!userId || !senderMobile || !trxId) {
+          return sendJson({ success: false, error: 'MISSING_FIELDS', message: 'User ID, Mobile Number and TrxID are required.' }, 400);
+        }
+
+        const db = loadDb();
+        const reqObj = {
+          id: 'REQ_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+          user_id: userId,
+          sender_mobile: senderMobile,
+          method: method,
+          trx_id: trxId,
+          amount: amount,
+          requested_days: requestedDays,
+          status: 'pending',
+          created_at: new Date().toISOString()
+        };
+
+        db.payment_requests.unshift(reqObj);
+        saveDb(db);
+
+        return sendJson({
+          success: true,
+          message: 'Payment request submitted successfully. Waiting for admin approval.',
+          request: reqObj
+        });
+      });
+    }
+
+    if (pathname === '/api/v1/license/reset-devices') {
+      return readBody((err, body) => {
+        const key = (body.key || '').trim();
+        const db = loadDb();
+        const user = db.users.find(u => u.user_id === key);
+
+        if (user) {
+          user.hwid = null;
+          saveDb(db);
+          return sendJson({ success: true, message: 'PC binding reset successfully.' });
+        }
+        return sendJson({ success: false, error: 'INVALID_KEY' });
+      });
+    }
+
+    if (pathname === '/api/v1/auth/login') {
+      return readBody((err, body) => {
+        const userId = (body.user_id || '').trim();
+        const password = (body.password || '').trim();
+        const hwid = (body.hwid || '').trim();
+
+        if (!userId || !password) {
+          return sendJson({ ok: false, error: 'User ID and Password required' }, 400);
+        }
+
+        const db = loadDb();
+        const user = db.users.find(u => u.user_id === userId);
+
+        if (!user || user.password_hash !== hashPassword(password)) {
+          return sendJson({ ok: false, error: 'Invalid User ID or Password' }, 401);
+        }
+
+        if (user.status !== 'active') {
+          return sendJson({ ok: false, error: 'Account suspended or inactive. Contact admin.' }, 403);
+        }
+
+        const now = new Date();
+        const expDt = new Date(user.expires_at);
+        if (now > expDt) {
+          return sendJson({ ok: false, expired: true, error: 'Subscription expired.' }, 403);
+        }
+
+        if (!hwid) {
+          return sendJson({ ok: false, error: 'Hardware ID missing' }, 400);
+        }
+
+        if (!user.hwid) {
+          user.hwid = hwid;
+          saveDb(db);
+        } else if (user.hwid !== hwid) {
+          return sendJson({ ok: false, device_locked: true, error: 'Access Denied: Account bound to another PC.' }, 403);
+        }
+
+        const token = `AHM_TOKEN_${user.id}_${crypto.randomBytes(16).toString('hex')}`;
+        const daysLeft = Math.max(0, Math.ceil((expDt - now) / (1000 * 60 * 60 * 24)));
+
+        return sendJson({
+          ok: true,
+          token,
+          user: {
+            user_id: user.user_id,
+            name: user.name,
+            expires_at: user.expires_at,
+            days_left: daysLeft
+          }
+        });
+      });
+    }
+
+    // --- ADMIN FORMS ---
+    if (pathname === '/admin/login') {
+      return readBody((err, body) => {
+        const username = (body.username || '').trim();
+        const password = (body.password || '').trim();
+
+        const db = loadDb();
+        const admin = db.admins.find(a => a.username === username);
+
+        if (admin && admin.password_hash === hashPassword(password)) {
+          const sid = crypto.randomBytes(16).toString('hex');
+          SESSIONS[sid] = { username: admin.username, id: admin.id };
+          return redirect('/admin/dashboard', `session_id=${sid}; Path=/; HttpOnly`);
+        }
+
+        return renderLogin('Invalid admin username or password.');
+      });
+    }
+
+    const admin = getSessionAdmin();
+    if (!admin) return redirect('/admin/login');
+
+    if (pathname === '/admin/users/create') {
+      return readBody((err, body) => {
+        const userId = (body.user_id || '').trim();
+        const password = (body.password || '').trim();
+        const name = (body.name || '').trim();
+        const phone = (body.phone || '').trim();
+        const payment_amount = (body.payment_amount || '').trim();
+        const payment_note = (body.payment_note || '').trim();
+        const custom_date = (body.custom_expiry_date || '').trim();
+        const set_exact_days = (body.set_exact_days || '').trim();
+        const days = parseInt(body.duration_days, 10) || 30;
+
+        if (!userId || !password) {
+          return renderCreateUser(admin, 'User ID and Password are required.');
+        }
+
+        const db = loadDb();
+        if (db.users.some(u => u.user_id === userId)) {
+          return renderCreateUser(admin, 'User ID already exists.');
+        }
+
+        let expDt;
+        if (set_exact_days) {
+          const addDays = parseInt(set_exact_days, 10) || 30;
+          expDt = new Date();
+          expDt.setDate(expDt.getDate() + addDays);
+        } else if (custom_date) {
+          expDt = new Date(custom_date + 'T23:59:59');
+        } else {
+          expDt = new Date();
+          expDt.setDate(expDt.getDate() + days);
+        }
+
+        db.users.unshift({
+          id: Date.now() + Math.floor(Math.random() * 1000),
+          user_id: userId,
+          password_hash: hashPassword(password),
+          name: name,
+          phone: phone,
+          payment_amount: payment_amount,
+          payment_note: payment_note,
+          status: 'active',
+          hwid: null,
+          expires_at: expDt.toISOString().replace('T', ' ').substring(0, 19),
+          created_at: new Date().toISOString()
+        });
+
+        saveDb(db);
+        return redirect('/admin/users?msg=User+created+successfully');
+      });
+    }
+
+    if (pathname === '/admin/users/update-user-payment') {
+      return readBody((err, body) => {
+        const targetUserId = (body.target_user_id || '').trim();
+        const db = loadDb();
+        const user = db.users.find(u => u.user_id === targetUserId);
+
+        if (user) {
+          if (body.payment_amount !== undefined) user.payment_amount = String(body.payment_amount).trim();
+          if (body.payment_note !== undefined) user.payment_note = String(body.payment_note).trim();
+
+          const exactDaysStr = (body.set_exact_days || '').trim();
+          if (exactDaysStr !== '') {
+            const addDays = parseInt(exactDaysStr, 10);
+            if (Number.isFinite(addDays)) {
+              const exp = new Date();
+              exp.setDate(exp.getDate() + addDays);
+              user.expires_at = exp.toISOString().replace('T', ' ').substring(0, 19);
+              user.status = 'active';
+            }
+          } else if (body.custom_expiry_date) {
+            user.expires_at = new Date(body.custom_expiry_date + 'T23:59:59').toISOString().replace('T', ' ').substring(0, 19);
+            user.status = 'active';
+          }
+          saveDb(db);
+        }
+        return redirect(`/admin/users?msg=Updated+record+for+${targetUserId}`);
+      });
+    }
+
+    if (pathname === '/admin/payments/approve') {
+      return readBody((err, body) => {
+        const reqId = (body.request_id || '').trim();
+        const addDays = parseInt(body.approve_days, 10) || 30;
+
+        const db = loadDb();
+        const pReq = db.payment_requests.find(r => r.id === reqId);
+
+        if (pReq) {
+          pReq.status = 'approved';
+          pReq.approved_at = new Date().toISOString();
+
+          let user = db.users.find(u => u.user_id === pReq.user_id);
+          if (!user) {
+            const expDt = new Date();
+            expDt.setDate(expDt.getDate() + addDays);
+            user = {
+              id: Date.now() + Math.floor(Math.random() * 1000),
+              user_id: pReq.user_id,
+              password_hash: hashPassword('123456'),
+              name: pReq.user_id,
+              phone: pReq.sender_mobile,
+              payment_amount: pReq.amount || '500',
+              payment_note: `${pReq.method} (${pReq.sender_mobile}) - TrxID: ${pReq.trx_id}`,
+              status: 'active',
+              hwid: null,
+              expires_at: expDt.toISOString().replace('T', ' ').substring(0, 19),
+              created_at: new Date().toISOString()
+            };
+            db.users.unshift(user);
+          } else {
+            const currExp = new Date(user.expires_at);
+            const now = new Date();
+            const base = currExp > now ? currExp : now;
+            base.setDate(base.getDate() + addDays);
+
+            user.expires_at = base.toISOString().replace('T', ' ').substring(0, 19);
+            user.status = 'active';
+            if (pReq.amount) user.payment_amount = pReq.amount;
+            user.payment_note = `${pReq.method} (${pReq.sender_mobile}) - TrxID: ${pReq.trx_id}`;
+          }
+
+          saveDb(db);
+          return redirect(`/admin/payments?msg=Payment+Approved!+Added+${addDays}+Days+for+${pReq.user_id}`);
+        }
+
+        return redirect('/admin/payments?error=Request+not+found');
+      });
+    }
+
+    if (pathname === '/admin/payments/reject') {
+      return readBody((err, body) => {
+        const reqId = (body.request_id || '').trim();
+        const db = loadDb();
+        const pReq = db.payment_requests.find(r => r.id === reqId);
+
+        if (pReq) {
+          pReq.status = 'rejected';
+          pReq.rejected_at = new Date().toISOString();
+          saveDb(db);
+          return redirect(`/admin/payments?msg=Payment+Request+Rejected+for+${pReq.user_id}`);
+        }
+
+        return redirect('/admin/payments?error=Request+not+found');
+      });
+    }
+
+    if (pathname.startsWith('/admin/users/') && pathname.endsWith('/renew')) {
+      const targetUserId = decodeURIComponent(pathname.split('/')[3]);
+      return readBody((err, body) => {
+        const extendDaysStr = body.extend_days || '';
+        const db = loadDb();
+        const user = db.users.find(u => u.user_id === targetUserId || String(u.id) === targetUserId);
+
+        if (user && extendDaysStr) {
+          const addDays = parseInt(extendDaysStr, 10) || 30;
+          const currExp = new Date(user.expires_at);
+          const now = new Date();
+          const base = currExp > now ? currExp : now;
+          base.setDate(base.getDate() + addDays);
+          user.expires_at = base.toISOString().replace('T', ' ').substring(0, 19);
+          user.status = 'active';
+          saveDb(db);
+        }
+
+        return redirect('/admin/users?msg=Subscription+renewed');
+      });
+    }
+
+    if (pathname.startsWith('/admin/users/') && pathname.endsWith('/reset-pc')) {
+      const targetUserId = decodeURIComponent(pathname.split('/')[3]);
+      const db = loadDb();
+      const user = db.users.find(u => u.user_id === targetUserId || String(u.id) === targetUserId);
+      if (user) {
+        user.hwid = null;
+        saveDb(db);
+      }
+      return redirect('/admin/users?msg=PC+Lock+Reset');
+    }
+
+    if (pathname.startsWith('/admin/users/') && pathname.endsWith('/toggle-status')) {
+      const targetUserId = decodeURIComponent(pathname.split('/')[3]);
+      const db = loadDb();
+      const user = db.users.find(u => u.user_id === targetUserId || String(u.id) === targetUserId);
+      if (user) {
+        user.status = user.status === 'active' ? 'suspended' : 'active';
+        saveDb(db);
+      }
+      return redirect('/admin/users?msg=Status+updated');
+    }
+
+    if (pathname.startsWith('/admin/users/') && pathname.endsWith('/delete')) {
+      const targetUserId = decodeURIComponent(pathname.split('/')[3]);
+      const db = loadDb();
+      db.users = db.users.filter(u => u.user_id !== targetUserId && String(u.id) !== targetUserId);
+      saveDb(db);
+      return redirect('/admin/users?msg=User+deleted');
+    }
+  }
+
+  sendJson({ ok: false, error: '404 Not Found' }, 404);
+
+  function renderLogin(error = null) {
+    const errHtml = error ? `<div class="alert alert-danger py-2 small fw-bold">${error}</div>` : '';
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Admin Login - Auto Fill Master</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>body { background:#0f172a; color:#fff; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; } .card { background:#1e293b; border:1px solid #334155; padding:30px; border-radius:12px; width:360px; }</style>
+</head>
+<body>
+  <div class="card">
+    <div class="text-center mb-3">
+      <img src="/logo.png" style="width:48px; height:48px; object-fit:contain;" alt="Logo"><br>
+      <h3 class="text-info fw-bold mt-2 mb-0">Auto Fill Master</h3>
+      <p class="text-light small fw-bold">Admin Dashboard Login</p>
+    </div>
+    ${errHtml}
+    <form action="/admin/login" method="POST">
+      <div class="mb-3"><label class="small text-info fw-bold mb-1">USERNAME</label><input type="text" name="username" class="form-control bg-dark text-white border-secondary fw-bold" required placeholder="admin"></div>
+      <div class="mb-4"><label class="small text-info fw-bold mb-1">PASSWORD</label><input type="password" name="password" class="form-control bg-dark text-white border-secondary fw-bold" required placeholder="adminpassword123"></div>
+      <button type="submit" class="btn btn-primary w-100 fw-bold">Login to Admin</button>
+    </form>
+  </div>
+</body>
+</html>`;
+    sendHtml(html);
+  }
+
+  function renderDashboard(admin) {
+    const db = loadDb();
+    const now = new Date();
+    const total = db.users.length;
+    const active = db.users.filter(u => u.status === 'active' && new Date(u.expires_at) > now).length;
+    const expired = db.users.filter(u => new Date(u.expires_at) <= now).length;
+    const pendingReqs = (db.payment_requests || []).filter(r => r.status === 'pending').length;
+    const recent = db.users.slice(0, 5);
+
+    let recentRows = '';
+    recent.forEach(u => {
+      recentRows += `<tr>
+        <td class="fw-bold text-info fs-6">${u.user_id}</td>
+        <td class="text-white fw-bold">${u.name || '-'}</td>
+        <td>${u.payment_amount ? `<span class="badge bg-info text-dark fw-bold">৳${u.payment_amount}</span>` : '-'}</td>
+        <td><span class="badge bg-${u.status === 'active' ? 'success' : 'danger'} fw-bold">${u.status}</span></td>
+        <td class="text-white fw-bold">${u.expires_at.substring(0, 10)}</td>
+      </tr>`;
+    });
+
+    const pendingBadge = pendingReqs > 0 ? `<span class="badge bg-danger ms-1">${pendingReqs}</span>` : '';
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Dashboard - Auto Fill Master</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>body { background:#0f172a; color:#fff; } .sidebar { background:#1e293b; min-height:100vh; width:240px; padding:20px; } .stat { background:#1e293b; border:1px solid #334155; padding:20px; border-radius:10px; }</style>
+</head>
+<body>
+<div class="d-flex">
+  <div class="sidebar">
+    <div class="d-flex align-items-center gap-2 mb-4">
+      <img src="/logo.png" style="width:32px; height:32px; object-fit:contain;">
+      <h4 class="text-info fw-bold mb-0">Auto Fill Master</h4>
+    </div>
+    <a href="/admin/dashboard" class="d-block text-white mb-3 text-decoration-none font-weight-bold">📌 Dashboard</a>
+    <a href="/admin/users" class="d-block text-light mb-3 text-decoration-none">👥 Users & Licenses</a>
+    <a href="/admin/payments" class="d-block text-light mb-3 text-decoration-none">📩 Payment Requests ${pendingBadge}</a>
+    <a href="/admin/settings" class="d-block text-light mb-3 text-decoration-none">⚙️ Central AI Keys</a>
+    <a href="/admin/users/create" class="d-block text-light mb-3 text-decoration-none">➕ Add New User</a>
+    <a href="/admin/logout" class="d-block text-danger mt-5 text-decoration-none">🚪 Logout</a>
+  </div>
+  <div class="p-4 flex-grow-1">
+    <h2 class="fw-bold mb-4 text-white">Overview Dashboard</h2>
+    <div class="row g-3 mb-4">
+      <div class="col-md-3"><div class="stat"><div class="text-info fw-bold small">TOTAL USERS</div><div class="fs-2 text-white fw-bold">${total}</div></div></div>
+      <div class="col-md-3"><div class="stat"><div class="text-info fw-bold small">ACTIVE</div><div class="fs-2 text-success fw-bold">${active}</div></div></div>
+      <div class="col-md-3"><div class="stat"><div class="text-info fw-bold small">EXPIRED</div><div class="fs-2 text-warning fw-bold">${expired}</div></div></div>
+      <div class="col-md-3"><div class="stat"><div class="text-info fw-bold small">PENDING PAYMENTS</div><div class="fs-2 text-danger fw-bold">${pendingReqs}</div></div></div>
+    </div>
+    <div class="stat">
+      <h5 class="fw-bold mb-3 text-white">Recently Added Accounts</h5>
+      <table class="table table-dark align-middle">
+        <thead><tr style="color:#38bdf8;"><th style="color:#38bdf8;">USER ID</th><th style="color:#38bdf8;">NAME</th><th style="color:#38bdf8;">PAYMENT</th><th style="color:#38bdf8;">STATUS</th><th style="color:#38bdf8;">EXPIRY</th></tr></thead>
+        <tbody>${recentRows || '<tr><td colspan="5" class="text-muted">No users found. Click "Add New User" to create one.</td></tr>'}</tbody>
+      </table>
+    </div>
+  </div>
+</div>
+</body>
+</html>`;
+    sendHtml(html);
+  }
+
+  function renderUsers(admin, msg = null, error = null) {
+    const db = loadDb();
+    const now = new Date();
+    const pendingReqs = (db.payment_requests || []).filter(r => r.status === 'pending').length;
+    const pendingBadge = pendingReqs > 0 ? `<span class="badge bg-danger ms-1">${pendingReqs}</span>` : '';
+    let rows = '';
+
+    db.users.forEach(u => {
+      const expDt = new Date(u.expires_at);
+      const isExp = now > expDt;
+      const daysLeft = Math.max(0, Math.ceil((expDt - now) / (1000 * 60 * 60 * 24)));
+      const hwidBadge = u.hwid ? '<span class="badge bg-secondary fw-bold">PC Locked</span>' : '<span class="badge bg-success fw-bold">Unbound</span>';
+      const statusBadge = u.status === 'suspended' ? '<span class="badge bg-danger fw-bold">Suspended</span>' : (isExp ? '<span class="badge bg-warning text-dark fw-bold">Expired</span>' : '<span class="badge bg-success fw-bold">Active</span>');
+      const yyyyMmDd = u.expires_at.substring(0, 10);
+      const payInfo = u.payment_amount ? `<span class="badge bg-info text-dark fw-bold">৳${u.payment_amount}</span> <small class="text-light fw-bold">${u.payment_note || ''}</small>` : '<span class="text-light small">No record</span>';
+
+      const modalId = 'modal_' + u.user_id.replace(/[^a-zA-Z0-9]/g, '_');
+
+      rows += `<tr>
+        <td class="fw-bold text-info fs-6" style="color:#38bdf8 !important;">${u.user_id}</td>
+        <td class="text-white fw-bold" style="color:#ffffff !important;">${u.name || '-'}</td>
+        <td>${payInfo}</td>
+        <td>${hwidBadge}</td>
+        <td>${statusBadge}</td>
+        <td class="text-white fw-bold" style="color:#ffffff !important;">${yyyyMmDd}</td>
+        <td class="fw-bold ${isExp ? 'text-danger' : 'text-success'}" style="font-size:15px;">${daysLeft} Days</td>
+        <td>
+          <div class="btn-group btn-group-sm">
+            <form action="/admin/users/${encodeURIComponent(u.user_id)}/renew" method="POST" style="display:inline-block;">
+              <select name="extend_days" onchange="this.form.submit()" class="form-select form-select-sm bg-dark text-white border-info fw-bold" style="width:110px;">
+                <option value="">+ Renew</option>
+                <option value="7">+ 7 Days</option>
+                <option value="30">+ 30 Days</option>
+                <option value="90">+ 90 Days</option>
+                <option value="365">+ 1 Year</option>
+              </select>
+            </form>
+            <button class="btn btn-sm btn-outline-info fw-bold" data-bs-toggle="modal" data-bs-target="#${modalId}">✏️ Custom Days/Date</button>
+            ${u.hwid ? `<form action="/admin/users/${encodeURIComponent(u.user_id)}/reset-pc" method="POST" style="display:inline-block;"><button class="btn btn-sm btn-outline-warning fw-bold">Reset PC</button></form>` : ''}
+            <form action="/admin/users/${encodeURIComponent(u.user_id)}/toggle-status" method="POST" style="display:inline-block;"><button class="btn btn-sm btn-outline-secondary fw-bold">Toggle</button></form>
+            <form action="/admin/users/${encodeURIComponent(u.user_id)}/delete" method="POST" style="display:inline-block;" onsubmit="return confirm('Delete user ${u.user_id}?');"><button class="btn btn-sm btn-outline-danger fw-bold">X</button></form>
+          </div>
+
+          <div class="modal fade" id="${modalId}" tabindex="-1">
+            <div class="modal-dialog modal-dialog-centered">
+              <div class="modal-content bg-dark text-white border-info">
+                <div class="modal-header border-secondary">
+                  <h5 class="modal-title text-info fw-bold">Edit User, Days & Payment - ${u.user_id}</h5>
+                  <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <form action="/admin/users/update-user-payment" method="POST">
+                  <input type="hidden" name="target_user_id" value="${u.user_id}">
+                  <div class="modal-body text-start">
+                    <div class="mb-3">
+                      <label class="text-info fw-bold small d-block mb-1">১. কত দিন মেয়াদ দিতে চান? (SET EXACT DAYS LEFT)</label>
+                      <input type="number" name="set_exact_days" class="form-control bg-dark text-white border-info fw-bold" value="${daysLeft}" placeholder="যেমন: 15 বা 45 বা 60">
+                      <div class="text-warning small mt-1">💡 আজ থেকে ঠিক কত দিন পর্যন্ত মেয়াদ রাখতে চান টাইপ করুন।</div>
+                    </div>
+                    <div class="mb-3">
+                      <label class="text-info fw-bold small d-block mb-1">২. অথবা কাস্টম মেয়াদের তারিখ (OR SELECT EXACT DATE)</label>
+                      <input type="date" name="custom_expiry_date" class="form-control bg-dark text-white border-secondary fw-bold" value="${yyyyMmDd}">
+                    </div>
+                    <hr class="border-secondary mb-3">
+                    <div class="mb-3">
+                      <label class="text-info fw-bold small d-block mb-1">৩. পেমেন্টের পরিমাণ (PAYMENT AMOUNT ৳)</label>
+                      <input type="text" name="payment_amount" class="form-control bg-dark text-white border-secondary fw-bold" value="${u.payment_amount || ''}" placeholder="যেমন: 500 বা 1500">
+                    </div>
+                    <div class="mb-3">
+                      <label class="text-info fw-bold small d-block mb-1">৪. পেমেন্টের নোট / মাধ্যম (PAYMENT NOTE)</label>
+                      <input type="text" name="payment_note" class="form-control bg-dark text-white border-secondary fw-bold" value="${u.payment_note || ''}" placeholder="যেমন: bKash - 22 Aug">
+                    </div>
+                  </div>
+                  <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary fw-bold">Save Changes for ${u.user_id}</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+        </td>
+      </tr>`;
+    });
+
+    const msgAlert = msg ? `<div class="alert alert-success py-2 font-weight-bold fw-bold text-dark" style="background:#dcfce7; border-color:#86efac;">${msg}</div>` : '';
+    const errAlert = error ? `<div class="alert alert-danger py-2 font-weight-bold fw-bold">${error}</div>` : '';
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Users & Licenses - Auto Fill Master</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <style>
+    body { background:#0f172a; color:#fff; font-family:'Segoe UI', sans-serif; }
+    .sidebar { background:#1e293b; min-height:100vh; width:240px; padding:20px; }
+    .stat { background:#1e293b; border:1px solid #334155; padding:20px; border-radius:10px; }
+    th { color:#38bdf8 !important; font-weight:700 !important; text-transform:uppercase; font-size:13px; }
+    td { color:#ffffff !important; font-size:14px; }
+  </style>
+</head>
+<body>
+<div class="d-flex">
+  <div class="sidebar">
+    <div class="d-flex align-items-center gap-2 mb-4">
+      <img src="/logo.png" style="width:32px; height:32px; object-fit:contain;">
+      <h4 class="text-info fw-bold mb-0">Auto Fill Master</h4>
+    </div>
+    <a href="/admin/dashboard" class="d-block text-light mb-3 text-decoration-none">📌 Dashboard</a>
+    <a href="/admin/users" class="d-block text-white mb-3 text-decoration-none font-weight-bold">👥 Users & Licenses</a>
+    <a href="/admin/payments" class="d-block text-light mb-3 text-decoration-none">📩 Payment Requests ${pendingBadge}</a>
+    <a href="/admin/settings" class="d-block text-light mb-3 text-decoration-none">⚙️ Central AI Keys</a>
+    <a href="/admin/users/create" class="d-block text-light mb-3 text-decoration-none">➕ Add New User</a>
+    <a href="/admin/logout" class="d-block text-danger mt-5 text-decoration-none">🚪 Logout</a>
+  </div>
+  <div class="p-4 flex-grow-1">
+    <div class="d-flex justify-content-between mb-4">
+      <h2 class="fw-bold text-white">User Accounts & Licenses</h2>
+      <a href="/admin/users/create" class="btn btn-primary fw-bold">+ Create User ID</a>
+    </div>
+    ${msgAlert}${errAlert}
+    <div class="stat">
+      <table class="table table-dark align-middle mb-0">
+        <thead><tr><th>USER ID</th><th>NAME</th><th>PAYMENT RECORD</th><th>PC LOCK</th><th>STATUS</th><th>EXPIRY DATE</th><th>REMAINING</th><th>ACTIONS</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="8" class="text-muted py-4 text-center">No client users yet. Click "+ Create User ID" to add one.</td></tr>'}</tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>`;
+    sendHtml(html);
+  }
+
+  
+  function renderSettings(admin, msg = null, error = null) {
+    const db = loadDb();
+    const reqs = db.payment_requests || [];
+    const pendingReqs = reqs.filter(r => r.status === 'pending').length;
+    const pendingBadge = pendingReqs > 0 ? `<span class="badge bg-danger ms-1">${pendingReqs}</span>` : '';
+    const settings = db.settings || {};
+
+    const geminiText = (settings.gemini_keys || []).join('\n');
+    const groqText = (settings.groq_keys || []).join('\n');
+    const provider = settings.default_provider || 'gemini';
+
+    const msgAlert = msg ? `<div class="alert alert-success py-2 fw-bold text-dark" style="background:#dcfce7; border-color:#86efac;">${msg}</div>` : '';
+    const errAlert = error ? `<div class="alert alert-danger py-2 fw-bold">${error}</div>` : '';
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Central AI Keys & Settings - Auto Fill Master</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body { background:#0f172a; color:#fff; font-family:'Segoe UI', sans-serif; }
+    .sidebar { background:#1e293b; min-height:100vh; width:240px; padding:20px; }
+    .stat { background:#1e293b; border:1px solid #334155; padding:25px; border-radius:10px; }
+    label { color:#38bdf8; font-weight:600; margin-bottom:6px; }
+    textarea, input, select { background:#0f172a !important; color:#fff !important; border:1px solid #334155 !important; }
+    textarea:focus, input:focus, select:focus { border-color:#38bdf8 !important; box-shadow:0 0 0 0.25rem rgba(56,189,248,0.25) !important; }
+  </style>
+</head>
+<body>
+<div class="d-flex">
+  <div class="sidebar">
+    <div class="d-flex align-items-center gap-2 mb-4">
+      <img src="/logo.png" style="width:32px; height:32px; object-fit:contain;">
+      <h4 class="text-info fw-bold mb-0">Auto Fill Master</h4>
+    </div>
+    <a href="/admin/dashboard" class="d-block text-light mb-3 text-decoration-none">📌 Dashboard</a>
+    <a href="/admin/users" class="d-block text-light mb-3 text-decoration-none">👥 Users & Licenses</a>
+    <a href="/admin/payments" class="d-block text-light mb-3 text-decoration-none">📩 Payment Requests ${pendingBadge}</a>
+    <a href="/admin/settings" class="d-block text-light mb-3 text-decoration-none">⚙️ Central AI Keys</a>
+    <a href="/admin/settings" class="d-block text-white mb-3 text-decoration-none font-weight-bold">⚙️ Central AI Keys</a>
+    <a href="/admin/users/create" class="d-block text-light mb-3 text-decoration-none">➕ Add New User</a>
+    <a href="/admin/logout" class="d-block text-danger mt-5 text-decoration-none">🚪 Logout</a>
+  </div>
+  <div class="p-4 flex-grow-1">
+    <h2 class="fw-bold text-white mb-2">Central AI Keys & Load Balancer</h2>
+    <p class="text-muted mb-4">Add your free Google Gemini or Groq API keys below. All clients will automatically use these keys with instant round-robin load balancing!</p>
+    ${msgAlert}${errAlert}
+    
+    <div class="stat" style="max-width:800px;">
+      <form action="/admin/settings" method="POST">
+        <div class="mb-4">
+          <label class="form-label fs-5">🌟 Google Gemini API Keys Pool (One key per line):</label>
+          <div class="text-muted small mb-2">Get free keys from <a href="https://aistudio.google.com/apikey" target="_blank" class="text-info">aistudio.google.com/apikey</a>. You can put 3 to 10 keys here for 100% unlimited capacity!</div>
+          <textarea name="gemini_keys" rows="5" class="form-control font-monospace" placeholder="AIzaSy...&#10;AIzaSy...&#10;AIzaSy...">${geminiText}</textarea>
+          <div class="mt-1 text-info small">Active Gemini Keys in Pool: <strong>${(settings.gemini_keys || []).length} keys</strong> (Capacity: ~<strong>${(settings.gemini_keys || []).length * 1500} passports/day</strong>)</div>
+        </div>
+
+        <div class="mb-4">
+          <label class="form-label fs-5">⚡ Groq API Keys Pool (Optional Backup):</label>
+          <div class="text-muted small mb-2">Get free keys from <a href="https://console.groq.com/keys" target="_blank" class="text-info">console.groq.com/keys</a>.</div>
+          <textarea name="groq_keys" rows="3" class="form-control font-monospace" placeholder="gsk_...&#10;gsk_...">${groqText}</textarea>
+        </div>
+
+        <div class="mb-4">
+          <label class="form-label">Primary AI Provider:</label>
+          <select name="default_provider" class="form-select" style="max-width:300px;">
+            <option value="gemini" ${provider === 'gemini' ? 'selected' : ''}>Google Gemini (Vision + Text - Recommended)</option>
+            <option value="groq" ${provider === 'groq' ? 'selected' : ''}>Groq (Ultra High Speed)</option>
+          </select>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-lg fw-bold px-4">💾 Save & Sync All Clients</button>
+      </form>
+    </div>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>`;
+    sendHtml(html);
+  }
+
+  function renderPayments(admin, msg = null, error = null) {
+    const db = loadDb();
+    const reqs = db.payment_requests || [];
+    const pendingReqs = reqs.filter(r => r.status === 'pending').length;
+    const pendingBadge = pendingReqs > 0 ? `<span class="badge bg-danger ms-1">${pendingReqs}</span>` : '';
+
+    let rows = '';
+    reqs.forEach(r => {
+      const isPending = r.status === 'pending';
+      const statusBadge = isPending ? '<span class="badge bg-warning text-dark fw-bold">Pending Approval</span>' : (r.status === 'approved' ? '<span class="badge bg-success fw-bold">Approved</span>' : '<span class="badge bg-danger fw-bold">Rejected</span>');
+      const timeStr = r.created_at ? new Date(r.created_at).toLocaleString() : '-';
+
+      rows += `<tr>
+        <td class="fw-bold text-info fs-6">${r.user_id}</td>
+        <td><span class="badge bg-primary fs-6">${r.method}</span></td>
+        <td class="fw-bold text-white fs-6">${r.sender_mobile}</td>
+        <td class="fw-bold text-warning font-monospace fs-6">${r.trx_id}</td>
+        <td class="fw-bold text-success fs-6">৳${r.amount || '500'}</td>
+        <td class="fw-bold text-white">${r.requested_days || 30} Days</td>
+        <td>${statusBadge}</td>
+        <td class="small text-light">${timeStr}</td>
+        <td>
+          ${isPending ? `
+            <div class="d-flex gap-1">
+              <form action="/admin/payments/approve" method="POST" style="display:inline-block;">
+                <input type="hidden" name="request_id" value="${r.id}">
+                <input type="hidden" name="approve_days" value="${r.requested_days || 30}">
+                <button type="submit" class="btn btn-sm btn-success fw-bold">✅ Approve (+${r.requested_days || 30} Days)</button>
+              </form>
+              <form action="/admin/payments/reject" method="POST" style="display:inline-block;" onsubmit="return confirm('Reject payment request ${r.trx_id}?');">
+                <input type="hidden" name="request_id" value="${r.id}">
+                <button type="submit" class="btn btn-sm btn-outline-danger fw-bold">❌ Reject</button>
+              </form>
+            </div>
+          ` : '<span class="text-muted small">Completed</span>'}
+        </td>
+      </tr>`;
+    });
+
+    const msgAlert = msg ? `<div class="alert alert-success py-2 font-weight-bold fw-bold text-dark" style="background:#dcfce7; border-color:#86efac;">${msg}</div>` : '';
+    const errAlert = error ? `<div class="alert alert-danger py-2 font-weight-bold fw-bold">${error}</div>` : '';
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Payment Requests - Auto Fill Master</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body { background:#0f172a; color:#fff; font-family:'Segoe UI', sans-serif; }
+    .sidebar { background:#1e293b; min-height:100vh; width:240px; padding:20px; }
+    .stat { background:#1e293b; border:1px solid #334155; padding:20px; border-radius:10px; }
+    th { color:#38bdf8 !important; font-weight:700 !important; text-transform:uppercase; font-size:13px; }
+    td { color:#ffffff !important; font-size:14px; }
+  </style>
+</head>
+<body>
+<div class="d-flex">
+  <div class="sidebar">
+    <div class="d-flex align-items-center gap-2 mb-4">
+      <img src="/logo.png" style="width:32px; height:32px; object-fit:contain;">
+      <h4 class="text-info fw-bold mb-0">Auto Fill Master</h4>
+    </div>
+    <a href="/admin/dashboard" class="d-block text-light mb-3 text-decoration-none">📌 Dashboard</a>
+    <a href="/admin/users" class="d-block text-light mb-3 text-decoration-none">👥 Users & Licenses</a>
+    <a href="/admin/payments" class="d-block text-white mb-3 text-decoration-none font-weight-bold">📩 Payment Requests ${pendingBadge}</a>
+    <a href="/admin/users/create" class="d-block text-light mb-3 text-decoration-none">➕ Add New User</a>
+    <a href="/admin/logout" class="d-block text-danger mt-5 text-decoration-none">🚪 Logout</a>
+  </div>
+  <div class="p-4 flex-grow-1">
+    <h2 class="fw-bold text-white mb-4">bKash & Nagad Payment Requests</h2>
+    ${msgAlert}${errAlert}
+    <div class="stat">
+      <table class="table table-dark align-middle mb-0">
+        <thead><tr><th>USER ID</th><th>METHOD</th><th>SENDER MOBILE</th><th>TRX ID</th><th>AMOUNT</th><th>PLAN</th><th>STATUS</th><th>SUBMITTED AT</th><th>ACTION</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="9" class="text-muted py-4 text-center">No payment requests submitted yet.</td></tr>'}</tbody>
+      </table>
+    </div>
+  </div>
+</div>
+</body>
+</html>`;
+    sendHtml(html);
+  }
+
+  function renderCreateUser(admin, error = null) {
+    const errDiv = error ? `<div class="alert alert-danger py-2 fw-bold">${error}</div>` : '';
+    const db = loadDb();
+    const pendingReqs = (db.payment_requests || []).filter(r => r.status === 'pending').length;
+    const pendingBadge = pendingReqs > 0 ? `<span class="badge bg-danger ms-1">${pendingReqs}</span>` : '';
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Add User - Auto Fill Master</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>body { background:#0f172a; color:#fff; } .sidebar { background:#1e293b; min-height:100vh; width:240px; padding:20px; } .stat { background:#1e293b; border:2px solid #38bdf8; border-radius:12px; padding:25px; max-width:600px; }</style>
+</head>
+<body>
+<div class="d-flex">
+  <div class="sidebar">
+    <div class="d-flex align-items-center gap-2 mb-4">
+      <img src="/logo.png" style="width:32px; height:32px; object-fit:contain;">
+      <h4 class="text-info fw-bold mb-0">Auto Fill Master</h4>
+    </div>
+    <a href="/admin/dashboard" class="d-block text-light mb-3 text-decoration-none">📌 Dashboard</a>
+    <a href="/admin/users" class="d-block text-light mb-3 text-decoration-none">👥 Users & Licenses</a>
+    <a href="/admin/payments" class="d-block text-light mb-3 text-decoration-none">📩 Payment Requests ${pendingBadge}</a>
+    <a href="/admin/settings" class="d-block text-light mb-3 text-decoration-none">⚙️ Central AI Keys</a>
+    <a href="/admin/users/create" class="d-block text-white mb-3 text-decoration-none font-weight-bold">➕ Add New User</a>
+    <a href="/admin/logout" class="d-block text-danger mt-5 text-decoration-none">🚪 Logout</a>
+  </div>
+  <div class="p-4 flex-grow-1">
+    <h2 class="fw-bold mb-4 text-white">Create Client User ID</h2>
+    ${errDiv}
+    <div class="stat">
+      <form action="/admin/users/create" method="POST">
+        <div class="mb-3">
+          <label class="text-info fw-bold fs-6 d-block mb-1">১. ইউজার আইডি (USER ID) *</label>
+          <input type="text" name="user_id" class="form-control bg-dark text-white border-info p-2 fw-bold" required placeholder="কাস্টমারের লগইন আইডি দিন (যেমন: client01)">
+        </div>
+
+        <div class="mb-3">
+          <label class="text-info fw-bold fs-6 d-block mb-1">২. পাসওয়ার্ড (PASSWORD) *</label>
+          <input type="text" name="password" class="form-control bg-dark text-white border-info p-2 fw-bold" required placeholder="কাস্টমারের পাসওয়ার্ড দিন (যেমন: 123456)">
+        </div>
+
+        <div class="mb-3">
+          <label class="text-info fw-bold fs-6 d-block mb-1">৩. কাস্টমারের নাম (CLIENT FULL NAME)</label>
+          <input type="text" name="name" class="form-control bg-dark text-white border-secondary p-2 fw-bold" placeholder="কাস্টমার বা তার দোকানের নাম (যেমন: Rahim Travels)">
+        </div>
+
+        <div class="mb-3">
+          <label class="text-info fw-bold fs-6 d-block mb-1">৪. মোবাইল নম্বর (PHONE NUMBER)</label>
+          <input type="text" name="phone" class="form-control bg-dark text-white border-secondary p-2 fw-bold" placeholder="01700000000">
+        </div>
+
+        <div class="row g-2 mb-3">
+          <div class="col-md-6">
+            <label class="text-info fw-bold fs-6 d-block mb-1">৫ (ক). পেমেন্টের পরিমাণ (৳)</label>
+            <input type="text" name="payment_amount" class="form-control bg-dark text-white border-secondary p-2 fw-bold" placeholder="যেমন: 500 বা 1500">
+          </div>
+          <div class="col-md-6">
+            <label class="text-info fw-bold fs-6 d-block mb-1">৫ (খ). পেমেন্ট নোট / মাধ্যম</label>
+            <input type="text" name="payment_note" class="form-control bg-dark text-white border-secondary p-2 fw-bold" placeholder="যেমন: bKash - 22 Aug">
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label class="text-info fw-bold fs-6 d-block mb-1">৬ (ক). মেয়াদের দিন সংখ্যা টাইপ করুন (SET EXACT DAYS)</label>
+          <input type="number" name="set_exact_days" class="form-control bg-dark text-white border-info p-2 fw-bold" placeholder="যেমন: 15 বা 30 বা 60 দিন">
+        </div>
+
+        <div class="mb-3">
+          <label class="text-info fw-bold fs-6 d-block mb-1">৬ (খ). অথবা মেয়াদের সময়সীমা সিলেক্ট করুন</label>
+          <select name="duration_days" class="form-select bg-dark text-white border-secondary p-2 fw-bold">
+            <option value="7">৭ দিন (১ সপ্তাহ)</option>
+            <option value="30" selected>৩০ দিন (১ মাস)</option>
+            <option value="90">৯০ দিন (৩ মাস)</option>
+            <option value="180">১৮০ দিন (৬ মাস)</option>
+            <option value="365">৩৬৫ দিন (১ বছর)</option>
+          </select>
+        </div>
+
+        <div class="mb-4">
+          <label class="text-info fw-bold fs-6 d-block mb-1">৬ (গ). অথবা কাস্টম মেয়াদের তারিখ (CUSTOM DATE PICKER)</label>
+          <input type="date" name="custom_expiry_date" class="form-control bg-dark text-white border-secondary p-2 fw-bold">
+        </div>
+
+        <button type="submit" class="btn btn-primary w-100 fw-bold py-2 fs-6">Create Account & Grant Access (একাউন্ট তৈরি করুন)</button>
+      </form>
+    </div>
+  </div>
+</div>
+</body>
+</html>`;
+    sendHtml(html);
+  }
+});
+
+server.listen(PORT, () => {
+  console.log(`=======================================================`);
+  console.log(`  Auto Fill Master HEAD Support Server Running on Port ${PORT}`);
+  console.log(`  Admin Panel URL : http://localhost:${PORT}/admin`);
+  console.log(`  Default Admin   : admin / adminpassword123`);
+  console.log(`=======================================================`);
+});

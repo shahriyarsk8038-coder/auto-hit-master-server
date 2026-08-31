@@ -1,0 +1,20 @@
+﻿{
+  "name": "auto-hit-master-server",
+  "version": "2.0.0",
+  "description": "Backend Licensing & Admin Dashboard for Auto Fill Master Chrome Extension",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "sqlite3": "^5.1.7",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "cors": "^2.8.5",
+    "ejs": "^3.1.10",
+    "express-session": "^1.18.0",
+    "cookie-parser": "^1.4.6"
+  }
+}
+

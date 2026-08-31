@@ -1,0 +1,66 @@
+{
+  "admins": [
+    {
+      "id": 1,
+      "username": "admin",
+      "password_hash": "4a3079c80425b68d2ad6ef3c56bd4e9bc35919494f41d9fcf4d1c7dba8ef352a",
+      "created_at": "2026-08-21T18:42:40.244Z"
+    }
+  ],
+  "users": [
+    {
+      "id": 1787406148057,
+      "user_id": "sbbb",
+      "password_hash": "b295bf61d69c460e8111e5daafed3299d4c3e36ccae3388e77a10e1f12e13d5a",
+      "name": "",
+      "phone": "",
+      "payment_amount": "",
+      "payment_note": "",
+      "status": "active",
+      "hwid": null,
+      "expires_at": "2026-09-21 13:42:27",
+      "created_at": "2026-08-22T13:42:27.708Z"
+    },
+    {
+      "id": 1787340196898,
+      "user_id": "sv12",
+      "password_hash": "1ef74605705a537772505ac21351472964b1597bf7d9a7607fe36f46567b0387",
+      "name": "",
+      "phone": "",
+      "status": "active",
+      "hwid": "hw:va-645067f4-9c29-4278-8178-c31b102832af|id:645067f4-9c29-4278-8178-c31b102832af",
+      "expires_at": "2026-08-27 11:40:32",
+      "created_at": "2026-08-21T19:23:16.899Z",
+      "payment_amount": "400",
+      "payment_note": "20/05/2005"
+    },
+    {
+      "id": 1787339433284,
+      "user_id": "sb12",
+      "password_hash": "3e104531e3ba38e5765fb01add8fbf51bfa82de1cf4fb9b08907ff9aa7c422a6",
+      "name": "sobuz",
+      "phone": "",
+      "status": "active",
+      "hwid": null,
+      "expires_at": "2026-09-27 11:59:59",
+      "created_at": "2026-08-21T19:10:33.284Z",
+      "payment_amount": "500",
+      "payment_note": "bKash (01711223344) - TrxID: BK8899XX"
+    }
+  ],
+  "logs": [],
+  "payment_requests": [
+    {
+      "id": "REQ_1787413350764_819",
+      "user_id": "sb12",
+      "sender_mobile": "01711223344",
+      "method": "bKash",
+      "trx_id": "BK8899XX",
+      "amount": "500",
+      "requested_days": 30,
+      "status": "approved",
+      "created_at": "2026-08-22T15:42:30.764Z",
+      "approved_at": "2026-08-22T15:42:30.904Z"
+    }
+  ]
+}
