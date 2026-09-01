@@ -9,6 +9,10 @@ const DB_FILE = path.join(__dirname, 'db', 'autohitmaster.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const SECRET_KEY = 'autohitmaster_node_secret_key_2026_super_secure';
 
+// Read API keys from Render environment variables (permanent, never reset on redeploy)
+const ENV_GEMINI_KEYS = (process.env.GEMINI_KEYS || '').split(',').map(k => k.trim()).filter(k => k.length > 5);
+const ENV_GROQ_KEYS = (process.env.GROQ_KEYS || '').split(',').map(k => k.trim()).filter(k => k.length > 5);
+
 if (!fs.existsSync(path.dirname(DB_FILE))) {
   fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
 }
@@ -164,8 +168,14 @@ const server = http.createServer((req, res) => {
     if (pathname === '/api/v1/config/ai-keys') {
       const db = loadDb();
       const settings = db.settings || {};
-      const geminiKeys = (settings.gemini_keys || []).filter(k => k && k.trim());
-      const groqKeys = (settings.groq_keys || []).filter(k => k && k.trim());
+
+      // Use DB keys first, fallback to Render environment variables (permanent)
+      const geminiKeys = ((settings.gemini_keys || []).filter(k => k && k.trim()).length > 0
+        ? settings.gemini_keys
+        : ENV_GEMINI_KEYS).filter(k => k && k.trim());
+      const groqKeys = ((settings.groq_keys || []).filter(k => k && k.trim()).length > 0
+        ? settings.groq_keys
+        : ENV_GROQ_KEYS).filter(k => k && k.trim());
 
       let selectedGemini = '';
       if (geminiKeys.length > 0) {
