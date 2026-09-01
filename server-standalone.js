@@ -240,6 +240,15 @@ const server = http.createServer((req, res) => {
                   const uid = meta.user_id || '01953348038';
                   const creds = parseInt(meta.credits, 10) || 20;
                   let u = db.users.find(x => x.user_id === uid || x.phone === uid);
+                  
+          // Prevent duplicate crediting for same invoice
+          if (!Array.isArray(db.processed_invoices)) db.processed_invoices = [];
+          if (invoiceId && db.processed_invoices.includes(invoiceId)) {
+            console.log(`[AUTO-VERIFY] Invoice ${invoiceId} already processed. Skipping duplicate credit.`);
+            return;
+          }
+          if (invoiceId) db.processed_invoices.push(invoiceId);
+
                   if (u) {
                     u.credits = (u.credits || 0) + creds;
                     u.status = 'active';
