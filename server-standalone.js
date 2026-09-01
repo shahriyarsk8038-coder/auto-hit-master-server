@@ -474,24 +474,12 @@ const server = http.createServer((req, res) => {
           pReq.status = 'approved';
           pReq.approved_at = new Date().toISOString();
 
-          let user = db.users.find(u => u.user_id === pReq.user_id);
+          // Use admin-specified target_user_id, fallback to pReq.user_id
+          const lookupId = (body.target_user_id || '').trim() || pReq.user_id;
+          let user = db.users.find(u => u.user_id === lookupId);
+
           if (!user) {
-            const expDt = new Date();
-            expDt.setDate(expDt.getDate() + addDays);
-            user = {
-              id: Date.now() + Math.floor(Math.random() * 1000),
-              user_id: pReq.user_id,
-              password_hash: hashPassword('123456'),
-              name: pReq.user_id,
-              phone: pReq.sender_mobile,
-              payment_amount: pReq.amount || '500',
-              payment_note: `${pReq.method} (${pReq.sender_mobile}) - TrxID: ${pReq.trx_id}`,
-              status: 'active',
-              hwid: null,
-              expires_at: expDt.toISOString().replace('T', ' ').substring(0, 19),
-              created_at: new Date().toISOString()
-            };
-            db.users.unshift(user);
+            return redirect('/admin/payments?error=' + encodeURIComponent('User ID "' + lookupId + '" not found! Please enter a valid existing User ID to credit days.'));
           } else {
             const currExp = new Date(user.expires_at);
             const now = new Date();
@@ -579,6 +567,23 @@ const server = http.createServer((req, res) => {
       db.users = db.users.filter(u => u.user_id !== targetUserId && String(u.id) !== targetUserId);
       saveDb(db);
       return redirect('/admin/users?msg=User+deleted');
+    }
+
+    if (pathname === '/admin/settings') {
+      return readBody((err, body) => {
+        const db = loadDb();
+        if (!db.settings) db.settings = {};
+        const rawGemini = String(body.gemini_keys || '');
+        const rawGroq = String(body.groq_keys || '');
+        const provider = String(body.default_provider || 'gemini').trim();
+        const gKeys = rawGemini.split(/[\r\n,]+/).map(k => k.trim()).filter(k => k.length > 5);
+        const qKeys = rawGroq.split(/[\r\n,]+/).map(k => k.trim()).filter(k => k.length > 5);
+        db.settings.gemini_keys = gKeys;
+        db.settings.groq_keys = qKeys;
+        db.settings.default_provider = provider;
+        saveDb(db);
+        return redirect('/admin/settings?msg=' + encodeURIComponent('AI API Keys saved! (' + gKeys.length + ' Gemini, ' + qKeys.length + ' Groq keys active).'));
+      });
     }
   }
 
@@ -926,7 +931,9 @@ const server = http.createServer((req, res) => {
               <form action="/admin/payments/approve" method="POST" style="display:inline-block;">
                 <input type="hidden" name="request_id" value="${r.id}">
                 <input type="hidden" name="approve_days" value="${r.requested_days || 30}">
-                <button type="submit" class="btn btn-sm btn-success fw-bold">✅ Approve (+${r.requested_days || 30} Days)</button>
+                <div class="mb-1 small text-warning">Link to User ID:</div>
+                <input type="text" name="target_user_id" class="form-control form-control-sm bg-dark text-white border-secondary mb-1" placeholder="Enter existing User ID" style="font-size:11px;" required>
+                <button type="submit" class="btn btn-sm btn-success fw-bold w-100">✅ Approve (+${r.requested_days || 30} Days)</button>
               </form>
               <form action="/admin/payments/reject" method="POST" style="display:inline-block;" onsubmit="return confirm('Reject payment request ${r.trx_id}?');">
                 <input type="hidden" name="request_id" value="${r.id}">
