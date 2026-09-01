@@ -871,7 +871,6 @@ const server = http.createServer((req, res) => {
     <a href="/admin/dashboard" class="d-block text-light mb-3 text-decoration-none">📌 Dashboard</a>
     <a href="/admin/users" class="d-block text-light mb-3 text-decoration-none">👥 Users & Licenses</a>
     <a href="/admin/payments" class="d-block text-light mb-3 text-decoration-none">📩 Payment Requests ${pendingBadge}</a>
-    <a href="/admin/settings" class="d-block text-light mb-3 text-decoration-none">⚙️ Central AI Keys</a>
     <a href="/admin/settings" class="d-block text-white mb-3 text-decoration-none font-weight-bold">⚙️ Central AI Keys</a>
     <a href="/admin/users/create" class="d-block text-light mb-3 text-decoration-none">➕ Add New User</a>
     <a href="/admin/logout" class="d-block text-danger mt-5 text-decoration-none">🚪 Logout</a>
