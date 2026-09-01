@@ -8,6 +8,10 @@ const PORT = process.env.PORT || 3000;
 const DB_FILE = path.join(__dirname, 'db', 'autohitmaster.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 let keyIndex = 0;
+
+const UDDOKTAPAY_BASE_URL = process.env.UDDOKTAPAY_BASE_URL || 'https://autofillmaster.paymently.io/api';
+const UDDOKTAPAY_API_KEY = process.env.UDDOKTAPAY_API_KEY || 'xYoZzrCpJSDo0kUFnEkO30yCT0lGx132nVedSgpG';
+
 const SECRET_KEY = 'autohitmaster_node_secret_key_2026_super_secure';
 
 // Read API keys from Render environment variables (permanent, never reset on redeploy)
@@ -203,6 +207,59 @@ const server = http.createServer((req, res) => {
       if (!admin) return redirect('/admin/login');
       return renderPayments(admin, reqUrl.searchParams.get('msg'), reqUrl.searchParams.get('error'));
     }
+    
+    if (pathname === '/payment/success') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Payment Successful - Auto Fill Master</title>
+  <style>
+    body { background: #0f172a; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+    .card { background: #1e293b; border: 1px solid #22c55e; border-radius: 16px; padding: 40px; text-align: center; max-width: 420px; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+    .icon { font-size: 56px; margin-bottom: 15px; }
+    h1 { color: #4ade80; margin: 0 0 10px 0; font-size: 24px; }
+    p { color: #94a3b8; font-size: 14px; line-height: 1.5; }
+    .btn { display: inline-block; background: #2563eb; color: #fff; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">✅</div>
+    <h1>পেমেন্ট সফল হয়েছে!</h1>
+    <p>আপনার একাউন্টে ক্রেডিট / সাবস্ক্রিপশন স্বয়ংক্রিয়ভাবে যোগ হয়ে গেছে। এখন আপনি এক্সটেনশনটি সরাসরি ব্যবহার করতে পারেন।</p>
+    <a href="#" onclick="window.close();" class="btn">উইন্ডো বন্ধ করুন</a>
+  </div>
+</body>
+</html>`);
+    }
+
+    if (pathname === '/payment/cancel') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Payment Cancelled - Auto Fill Master</title>
+  <style>
+    body { background: #0f172a; color: #fff; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+    .card { background: #1e293b; border: 1px solid #ef4444; border-radius: 16px; padding: 40px; text-align: center; max-width: 420px; }
+    h1 { color: #f87171; margin: 0 0 10px 0; }
+    p { color: #94a3b8; font-size: 14px; }
+    .btn { display: inline-block; background: #475569; color: #fff; text-decoration: none; padding: 10px 20px; border-radius: 8px; font-weight: bold; margin-top: 15px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>❌ পেমেন্ট বাতিল করা হয়েছে</h1>
+    <p>আপনি পেমেন্টটি বাতিল করেছেন। পুনরায় চেষ্টা করতে চাইলে এক্সটেনশনে ফিরে যান।</p>
+    <a href="#" onclick="window.close();" class="btn">উইন্ডো বন্ধ করুন</a>
+  </div>
+</body>
+</html>`);
+    }
+
     if (pathname === '/api/v1/payment/status') {
       const userId = (reqUrl.searchParams.get('user_id') || '').trim();
       const db = loadDb();
@@ -214,6 +271,183 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'POST') {
     // --- API ENDPOINTS ---
+    
+    // --- UDDOKTAPAY AUTOMATIC CHECKOUT CREATION ---
+    if (pathname === '/api/v1/payment/create-checkout') {
+      return readBody(async (err, body) => {
+        const userId = (body.user_id || '').trim() || 'CUST_' + Math.random().toString(36).substring(2, 8).toUpperCase();
+        const name = (body.name || 'Customer').trim();
+        const email = (body.email || 'customer@autofillmaster.com').trim();
+        const amount = String(body.amount || '100').trim();
+        const credits = parseInt(body.credits, 10) || 0;
+        const days = parseInt(body.days, 10) || 0;
+
+        try {
+          const payload = JSON.stringify({
+            full_name: name,
+            email: email,
+            amount: amount,
+            metadata: {
+              user_id: userId,
+              credits: credits,
+              days: days,
+              name: name
+            },
+            redirect_url: 'https://auto-fill-master-server.onrender.com/payment/success',
+            cancel_url: 'https://auto-fill-master-server.onrender.com/payment/cancel',
+            webhook_url: 'https://auto-fill-master-server.onrender.com/api/v1/payment/webhook'
+          });
+
+          const urlObj = new URL(UDDOKTAPAY_BASE_URL + '/checkout-v2');
+          const https = require('https');
+          const apiReq = https.request({
+            hostname: urlObj.hostname,
+            path: urlObj.pathname,
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'RT-UDDOKTAPAY-API-KEY': UDDOKTAPAY_API_KEY,
+              'Accept': 'application/json',
+              'Content-Length': Buffer.byteLength(payload)
+            }
+          }, (apiRes) => {
+            let resData = '';
+            apiRes.on('data', chunk => resData += chunk);
+            apiRes.on('end', () => {
+              try {
+                const json = JSON.parse(resData);
+                if (json && json.status && json.payment_url) {
+                  return sendJson({ success: true, payment_url: json.payment_url, user_id: userId });
+                }
+                return sendJson({ success: false, error: json.message || 'Payment initiation failed' });
+              } catch (parseErr) {
+                return sendJson({ success: false, error: 'Invalid response from gateway' });
+              }
+            });
+          });
+
+          apiReq.on('error', (e) => {
+            return sendJson({ success: false, error: 'Payment gateway connection error' });
+          });
+
+          apiReq.write(payload);
+          apiReq.end();
+        } catch (e) {
+          return sendJson({ success: false, error: 'Internal checkout error' });
+        }
+      });
+    }
+
+    // --- UDDOKTAPAY WEBHOOK (INSTANT AUTOMATIC APPROVAL) ---
+    if (pathname === '/api/v1/payment/webhook') {
+      return readBody((err, body) => {
+        try {
+          const status = (body.status || '').toUpperCase();
+          if (status !== 'COMPLETED') {
+            return sendJson({ status: false, message: 'Not completed' });
+          }
+
+          const metadata = body.metadata || {};
+          const userId = metadata.user_id || body.invoice_id || 'USER_' + Date.now();
+          const creditsToAdd = parseInt(metadata.credits, 10) || 0;
+          const daysToAdd = parseInt(metadata.days, 10) || 0;
+          const amount = body.amount || '0';
+          const trxId = body.transaction_id || body.invoice_id || ('AUTO_' + Date.now());
+          const senderMobile = body.sender_number || 'Auto Gateway';
+
+          const db = loadDb();
+          let user = db.users.find(u => u.user_id === userId);
+
+          const now = new Date();
+          if (!user) {
+            // Auto create new user account
+            const expDate = new Date();
+            expDate.setDate(expDate.getDate() + (daysToAdd > 0 ? daysToAdd : 365));
+            user = {
+              user_id: userId,
+              name: metadata.name || 'Auto Customer',
+              role: 'user',
+              plan: creditsToAdd > 0 ? 'credits' : (daysToAdd >= 365 ? '1_year' : '1_month'),
+              status: 'active',
+              credits: creditsToAdd,
+              created_at: now.toISOString(),
+              expires_at: expDate.toISOString(),
+              hwid: null,
+              notes: 'Auto-created via Paymently Gateway'
+            };
+            db.users.push(user);
+          } else {
+            // Update existing user
+            user.status = 'active';
+            if (creditsToAdd > 0) {
+              user.credits = (user.credits || 0) + creditsToAdd;
+            }
+            if (daysToAdd > 0) {
+              const currentExp = new Date(user.expires_at || now);
+              const baseDate = currentExp > now ? currentExp : now;
+              baseDate.setDate(baseDate.getDate() + daysToAdd);
+              user.expires_at = baseDate.toISOString();
+            }
+          }
+
+          // Record transaction log
+          db.payment_requests.unshift({
+            id: 'PAY_' + Date.now(),
+            user_id: userId,
+            name: user.name,
+            sender_mobile: senderMobile,
+            method: 'Paymently Auto (' + (body.payment_method || 'bKash') + ')',
+            trx_id: trxId,
+            amount: amount,
+            requested_days: daysToAdd,
+            credits: creditsToAdd,
+            status: 'approved_auto',
+            created_at: now.toISOString(),
+            approved_at: now.toISOString(),
+            notes: 'Verified automatically by Paymently Webhook'
+          });
+
+          saveDb(db);
+          console.log(`[WEBHOOK] Successfully credited User ${userId}: +${creditsToAdd} credits, +${daysToAdd} days.`);
+          return sendJson({ status: true, message: 'Payment processed successfully' });
+        } catch (webhookErr) {
+          console.error('[WEBHOOK ERROR]', webhookErr);
+          return sendJson({ status: false, error: webhookErr.message });
+        }
+      });
+    }
+
+    // --- CREDIT DEDUCTION PER PASSPORT SCAN ---
+    if (pathname === '/api/v1/license/deduct-credit') {
+      return readBody((err, body) => {
+        const key = (body.key || body.user_id || '').trim();
+        if (!key) return sendJson({ ok: false, error: 'No user ID provided' });
+
+        const db = loadDb();
+        const user = db.users.find(u => u.user_id === key);
+        if (!user) return sendJson({ ok: false, error: 'User not found' });
+        if (user.status !== 'active') return sendJson({ ok: false, error: 'Account is suspended' });
+
+        const now = new Date();
+        const expDt = new Date(user.expires_at);
+
+        // If user is on an active unlimited time plan, no deduction needed
+        if (now <= expDt && user.plan !== 'credits') {
+          return sendJson({ ok: true, plan_type: 'unlimited', days_left: Math.ceil((expDt - now) / (1000 * 60 * 60 * 24)) });
+        }
+
+        // Credit-based plan deduction (1 credit = 1 Tk = 1 Passport)
+        const currentCredits = user.credits || 0;
+        if (currentCredits <= 0) {
+          return sendJson({ ok: false, error: 'INSUFFICIENT_CREDITS', message: 'আপনার ক্রেডিট ব্যালেন্স শেষ! রিচার্জ করুন।' });
+        }
+
+        user.credits = currentCredits - 1;
+        saveDb(db);
+        return sendJson({ ok: true, plan_type: 'credits', remaining_credits: user.credits });
+      });
+    }
+
     if (pathname === '/api/v1/license/verify' || pathname === '/api/v1/license/info') {
       return readBody((err, body) => {
         const key = (body.key || body.user_id || '').trim();
@@ -235,9 +469,12 @@ const server = http.createServer((req, res) => {
         }
 
         const now = new Date();
-        const expDt = new Date(user.expires_at);
-        if (now > expDt) {
-          return sendJson({ success: false, error: 'EXPIRED', message: 'License has expired.' });
+        const expDt = new Date(user.expires_at || now);
+        const hasCredits = (user.credits || 0) > 0;
+        const isTimeValid = now <= expDt;
+
+        if (!isTimeValid && !hasCredits) {
+          return sendJson({ success: false, error: 'EXPIRED', message: 'License expired or credits finished. Please recharge.' });
         }
 
         if (fp) {
@@ -255,9 +492,10 @@ const server = http.createServer((req, res) => {
           success: true,
           autofill_enabled: true,
           user_name: user.name || user.user_id,
-          plan: 'Pro Lifetime',
+          plan: hasCredits && !isTimeValid ? 'Credits Plan' : 'Pro Plan',
+          credits: user.credits || 0,
           expires_at: user.expires_at,
-          remaining_days: daysLeft,
+          remaining_days: isTimeValid ? daysLeft : 0,
           autofill_browser_limit: 1,
           autofill_browser_used: 1
         });
