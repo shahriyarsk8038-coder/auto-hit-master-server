@@ -386,6 +386,47 @@ const server = http.createServer((req, res) => {
       });
     }
 
+    
+    // --- PASSWORD RESET VIA TRANSACTION ID ---
+    if (pathname === '/api/v1/auth/reset-password') {
+      return readBody((err, body) => {
+        const phone = (body.phone || '').trim().replace(/[^0-9]/g, '');
+        const trxId = (body.trx_id || '').trim().toUpperCase();
+        const newPass = (body.new_password || '').trim();
+
+        if (!phone || phone.length < 10) {
+          return sendJson({ success: false, error: 'INVALID_PHONE', message: 'সঠিক মোবাইল নম্বর দিন।' });
+        }
+        if (!trxId) {
+          return sendJson({ success: false, error: 'INVALID_TRX', message: 'আপনার বিকাশ/নগদ TrxID দিন।' });
+        }
+        if (!newPass) {
+          return sendJson({ success: false, error: 'INVALID_PASS', message: 'নতুন পাসওয়ার্ড দিন।' });
+        }
+
+        const db = loadDb();
+        const user = db.users.find(u => u.user_id === phone || u.phone === phone);
+        if (!user) {
+          return sendJson({ success: false, error: 'NOT_FOUND', message: 'এই নম্বরে কোনো একাউন্ট পাওয়া যায়নি।' });
+        }
+
+        // Verify if TrxID belongs to this user in payment requests
+        const matchedPayment = (db.payment_requests || []).find(r => 
+          (r.user_id === phone || r.sender_mobile?.includes(phone)) && 
+          r.trx_id?.toUpperCase() === trxId
+        );
+
+        if (!matchedPayment) {
+          return sendJson({ success: false, error: 'TRX_MISMATCH', message: 'ট্রানজেকশন আইডি (TrxID) মেলেনি। সঠিক TrxID দিন অথবা WhatsApp-এ যোগাযোগ করুন।' });
+        }
+
+        user.password = newPass;
+        saveDb(db);
+        console.log(`[PASS RESET] User ${phone} successfully reset password via TrxID ${trxId}!`);
+        return sendJson({ success: true, message: 'পাসওয়ার্ড সফলভাবে পরিবর্তন করা হয়েছে! এখন লগইন করুন।' });
+      });
+    }
+
     if (pathname === '/api/v1/payment/create-checkout') {
       return readBody(async (err, body) => {
         const userId = (body.user_id || '').trim() || 'CUST_' + Math.random().toString(36).substring(2, 8).toUpperCase();
