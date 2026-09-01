@@ -260,6 +260,44 @@ const server = http.createServer((req, res) => {
 </html>`);
     }
 
+    
+    if (pathname === '/api/v1/wallet/balance') {
+      const userId = (reqUrl.searchParams.get('user_id') || '').trim();
+      if (!userId) return sendJson({ success: false, error: 'No user ID' });
+
+      const db = loadDb();
+      let user = db.users.find(u => u.user_id === userId);
+      const now = new Date();
+
+      if (!user) {
+        // Auto-create new user on first install with 3 free trial passport credits!
+        const expDate = new Date();
+        expDate.setDate(expDate.getDate() + 365);
+        user = {
+          user_id: userId,
+          name: 'Customer (' + userId + ')',
+          role: 'user',
+          plan: 'credits',
+          status: 'active',
+          credits: 3, // 3 FREE TRIAL PASSPORTS FOR NEW USERS!
+          created_at: now.toISOString(),
+          expires_at: expDate.toISOString(),
+          hwid: null,
+          notes: 'New install - 3 Free Trial Credits'
+        };
+        db.users.push(user);
+        saveDb(db);
+        console.log(`[AUTO-REGISTER] New user ${userId} registered with 3 Free Trial Credits!`);
+      }
+
+      return sendJson({
+        success: true,
+        user_id: user.user_id,
+        credits: user.credits != null ? user.credits : 0,
+        status: user.status
+      });
+    }
+
     if (pathname === '/api/v1/payment/status') {
       const userId = (reqUrl.searchParams.get('user_id') || '').trim();
       const db = loadDb();
