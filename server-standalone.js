@@ -312,12 +312,13 @@ const server = http.createServer((req, res) => {
     
     // --- UDDOKTAPAY AUTOMATIC CHECKOUT CREATION ---
     
-    // --- PHONE NUMBER + PASSWORD AUTH (LOGIN / AUTO-REGISTER) ---
+    // --- PHONE NUMBER + PASSWORD AUTH (DEVICE-LOCKED FREE TRIAL + UNLIMITED MULTI-PC) ---
     if (pathname === '/api/v1/auth/login-or-register') {
       return readBody((err, body) => {
         const phone = (body.phone || body.mobile || body.user_id || '').trim().replace(/[^0-9]/g, '');
         const password = (body.password || body.pin || '1234').trim();
         const name = (body.name || 'User ' + phone).trim();
+        const deviceId = (body.device_id || body.fp || '').trim();
 
         if (!phone || phone.length < 10) {
           return sendJson({ success: false, error: 'INVALID_PHONE', message: 'সঠিক মোবাইল নম্বর দিন (যেমন: 017xxxxxxxx)' });
@@ -327,11 +328,22 @@ const server = http.createServer((req, res) => {
         }
 
         const db = loadDb();
+        if (!Array.isArray(db.claimed_trial_devices)) {
+          db.claimed_trial_devices = [];
+        }
+
         let user = db.users.find(u => u.user_id === phone || u.phone === phone);
         const now = new Date();
 
         if (!user) {
-          // New User Registration with 3 Free Trial Credits!
+          // Check if this device has already claimed the free trial
+          const hasClaimedTrial = deviceId && db.claimed_trial_devices.includes(deviceId);
+          const initialCredits = hasClaimedTrial ? 0 : 3;
+
+          if (deviceId && !hasClaimedTrial) {
+            db.claimed_trial_devices.push(deviceId);
+          }
+
           const expDate = new Date();
           expDate.setDate(expDate.getDate() + 365);
           user = {
@@ -342,15 +354,21 @@ const server = http.createServer((req, res) => {
             role: 'user',
             plan: 'credits',
             status: 'active',
-            credits: 3, // 3 FREE CREDITS!
+            credits: initialCredits,
             created_at: now.toISOString(),
             expires_at: expDate.toISOString(),
-            hwid: null,
-            notes: 'Registered via Phone + Password'
+            hwid: null, // Unlimited PCs allowed!
+            registered_device: deviceId || null,
+            notes: hasClaimedTrial ? 'Registered - Trial Already Claimed' : 'Registered - 3 Free Trial Credits Granted'
           };
           db.users.push(user);
           saveDb(db);
-          console.log(`[NEW USER] Phone ${phone} registered with 3 Free Credits!`);
+
+          const welcomeMsg = initialCredits > 0
+            ? 'একাউন্ট তৈরি হয়েছে! ৩টি ফ্রি আবেদন ক্রেডিট দেওয়া হলো।'
+            : 'একাউন্ট তৈরি হয়েছে! (এই ডিভাইসে পূর্বে ফ্রি ট্রায়াল নেওয়া হয়েছে, ব্যালেন্স: ৳০)';
+
+          console.log(`[NEW USER] ${phone} registered from device ${deviceId}. Credits: ${initialCredits}`);
           return sendJson({
             success: true,
             is_new: true,
@@ -358,16 +376,15 @@ const server = http.createServer((req, res) => {
             phone: user.phone,
             name: user.name,
             credits: user.credits,
-            message: 'একাউন্ট তৈরি হয়েছে! ৩টি ফ্রি আবেদন দেওয়া হলো।'
+            message: welcomeMsg
           });
         }
 
-        // Existing User Login Check
+        // Existing User Login Check (Works on UNLIMITED computers!)
         if (user.password && user.password !== password) {
           return sendJson({ success: false, error: 'WRONG_PASSWORD', message: 'ভুল পাসওয়ার্ড! সঠিক পাসওয়ার্ড দিন।' });
         }
 
-        // Update password if not set
         if (!user.password) {
           user.password = password;
           saveDb(db);
