@@ -311,6 +311,81 @@ const server = http.createServer((req, res) => {
     // --- API ENDPOINTS ---
     
     // --- UDDOKTAPAY AUTOMATIC CHECKOUT CREATION ---
+    
+    // --- PHONE NUMBER + PASSWORD AUTH (LOGIN / AUTO-REGISTER) ---
+    if (pathname === '/api/v1/auth/login-or-register') {
+      return readBody((err, body) => {
+        const phone = (body.phone || body.mobile || body.user_id || '').trim().replace(/[^0-9]/g, '');
+        const password = (body.password || body.pin || '1234').trim();
+        const name = (body.name || 'User ' + phone).trim();
+
+        if (!phone || phone.length < 10) {
+          return sendJson({ success: false, error: 'INVALID_PHONE', message: 'সঠিক মোবাইল নম্বর দিন (যেমন: 017xxxxxxxx)' });
+        }
+        if (!password) {
+          return sendJson({ success: false, error: 'INVALID_PASS', message: 'পাসওয়ার্ড বা পিন দিন।' });
+        }
+
+        const db = loadDb();
+        let user = db.users.find(u => u.user_id === phone || u.phone === phone);
+        const now = new Date();
+
+        if (!user) {
+          // New User Registration with 3 Free Trial Credits!
+          const expDate = new Date();
+          expDate.setDate(expDate.getDate() + 365);
+          user = {
+            user_id: phone,
+            phone: phone,
+            password: password,
+            name: name,
+            role: 'user',
+            plan: 'credits',
+            status: 'active',
+            credits: 3, // 3 FREE CREDITS!
+            created_at: now.toISOString(),
+            expires_at: expDate.toISOString(),
+            hwid: null,
+            notes: 'Registered via Phone + Password'
+          };
+          db.users.push(user);
+          saveDb(db);
+          console.log(`[NEW USER] Phone ${phone} registered with 3 Free Credits!`);
+          return sendJson({
+            success: true,
+            is_new: true,
+            user_id: user.user_id,
+            phone: user.phone,
+            name: user.name,
+            credits: user.credits,
+            message: 'একাউন্ট তৈরি হয়েছে! ৩টি ফ্রি আবেদন দেওয়া হলো।'
+          });
+        }
+
+        // Existing User Login Check
+        if (user.password && user.password !== password) {
+          return sendJson({ success: false, error: 'WRONG_PASSWORD', message: 'ভুল পাসওয়ার্ড! সঠিক পাসওয়ার্ড দিন।' });
+        }
+
+        // Update password if not set
+        if (!user.password) {
+          user.password = password;
+          saveDb(db);
+        }
+
+        return sendJson({
+          success: true,
+          is_new: false,
+          user_id: user.user_id,
+          phone: user.phone || user.user_id,
+          name: user.name,
+          credits: user.credits != null ? user.credits : 0,
+          status: user.status,
+          message: 'লগইন সফল হয়েছে!'
+        });
+      });
+    }
+
     if (pathname === '/api/v1/payment/create-checkout') {
       return readBody(async (err, body) => {
         const userId = (body.user_id || '').trim() || 'CUST_' + Math.random().toString(36).substring(2, 8).toUpperCase();
