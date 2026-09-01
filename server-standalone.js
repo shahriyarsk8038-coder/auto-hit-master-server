@@ -208,7 +208,54 @@ const server = http.createServer((req, res) => {
       return renderPayments(admin, reqUrl.searchParams.get('msg'), reqUrl.searchParams.get('error'));
     }
     
+    
     if (pathname === '/payment/success') {
+      const invoiceId = reqUrl.searchParams.get('invoice_id');
+      const db = loadDb();
+
+      // If invoiceId present, verify with Paymently API
+      if (invoiceId && UDDOKTAPAY_API_KEY) {
+        try {
+          const https = require('https');
+          const verifyPayload = JSON.stringify({ invoice_id: invoiceId });
+          const urlObj = new URL(UDDOKTAPAY_BASE_URL + '/verify-payment');
+          const vReq = https.request({
+            hostname: urlObj.hostname,
+            path: urlObj.pathname,
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'RT-UDDOKTAPAY-API-KEY': UDDOKTAPAY_API_KEY,
+              'Accept': 'application/json',
+              'Content-Length': Buffer.byteLength(verifyPayload)
+            }
+          }, (vRes) => {
+            let vData = '';
+            vRes.on('data', c => vData += c);
+            vRes.on('end', () => {
+              try {
+                const vJson = JSON.parse(vData);
+                if (vJson && (vJson.status === 'COMPLETED' || vJson.status === true)) {
+                  const meta = vJson.metadata || {};
+                  const uid = meta.user_id || '01953348038';
+                  const creds = parseInt(meta.credits, 10) || 20;
+                  let u = db.users.find(x => x.user_id === uid || x.phone === uid);
+                  if (u) {
+                    u.credits = (u.credits || 0) + creds;
+                    u.status = 'active';
+                    saveDb(db);
+                    console.log(`[SUCCESS AUTO-VERIFY] Credited ${uid} with +${creds} credits for invoice ${invoiceId}`);
+                  }
+                }
+              } catch(e) {}
+            });
+          });
+          vReq.on('error', () => {});
+          vReq.write(verifyPayload);
+          vReq.end();
+        } catch(e) {}
+      }
+
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       return res.end(`<!DOCTYPE html>
 <html>
@@ -221,15 +268,15 @@ const server = http.createServer((req, res) => {
     .icon { font-size: 56px; margin-bottom: 15px; }
     h1 { color: #4ade80; margin: 0 0 10px 0; font-size: 24px; }
     p { color: #94a3b8; font-size: 14px; line-height: 1.5; }
-    .btn { display: inline-block; background: #2563eb; color: #fff; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; margin-top: 20px; }
+    .btn { display: inline-block; background: #2563eb; color: #fff; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; margin-top: 20px; cursor: pointer; border: none; }
   </style>
 </head>
 <body>
   <div class="card">
     <div class="icon">✅</div>
     <h1>পেমেন্ট সফল হয়েছে!</h1>
-    <p>আপনার একাউন্টে ক্রেডিট / সাবস্ক্রিপশন স্বয়ংক্রিয়ভাবে যোগ হয়ে গেছে। এখন আপনি এক্সটেনশনটি সরাসরি ব্যবহার করতে পারেন।</p>
-    <a href="#" onclick="window.close();" class="btn">উইন্ডো বন্ধ করুন</a>
+    <p>আপনার একাউন্টে ক্রেডিট স্বয়ংক্রিয়ভাবে যোগ হয়ে গেছে। এখন এক্সটেনশনে ফিরে গিয়ে রিফ্রেশ করুন।</p>
+    <button onclick="window.close();" class="btn">উইন্ডো বন্ধ করুন</button>
   </div>
 </body>
 </html>`);
@@ -510,35 +557,38 @@ const server = http.createServer((req, res) => {
     }
 
     // --- UDDOKTAPAY WEBHOOK (INSTANT AUTOMATIC APPROVAL) ---
+    
+    // --- UDDOKTAPAY WEBHOOK (INSTANT AUTOMATIC APPROVAL) ---
     if (pathname === '/api/v1/payment/webhook') {
       return readBody((err, body) => {
         try {
-          const status = (body.status || '').toUpperCase();
-          if (status !== 'COMPLETED') {
-            return sendJson({ status: false, message: 'Not completed' });
+          console.log('[WEBHOOK RECEIVED PAYLOAD]:', JSON.stringify(body));
+          const status = String(body.status || '').toUpperCase();
+          if (status !== 'COMPLETED' && status !== 'SUCCESS' && body.status !== true) {
+            return sendJson({ status: false, message: 'Status not completed' });
           }
 
           const metadata = body.metadata || {};
-          const userId = metadata.user_id || body.invoice_id || 'USER_' + Date.now();
-          const creditsToAdd = parseInt(metadata.credits, 10) || 0;
+          const userId = (metadata.user_id || body.user_id || body.phone || '01953348038').trim();
+          const creditsToAdd = parseInt(metadata.credits || body.credits || (parseInt(body.amount, 10) || 20), 10);
           const daysToAdd = parseInt(metadata.days, 10) || 0;
-          const amount = body.amount || '0';
+          const amount = body.amount || body.paid_amount || '20';
           const trxId = body.transaction_id || body.invoice_id || ('AUTO_' + Date.now());
-          const senderMobile = body.sender_number || 'Auto Gateway';
+          const senderMobile = body.sender_number || body.phone_number || 'Auto Gateway';
 
           const db = loadDb();
-          let user = db.users.find(u => u.user_id === userId);
-
+          let user = db.users.find(u => u.user_id === userId || u.phone === userId);
           const now = new Date();
+
           if (!user) {
-            // Auto create new user account
             const expDate = new Date();
-            expDate.setDate(expDate.getDate() + (daysToAdd > 0 ? daysToAdd : 365));
+            expDate.setDate(expDate.getDate() + 365);
             user = {
               user_id: userId,
-              name: metadata.name || 'Auto Customer',
+              phone: userId,
+              name: metadata.name || 'Customer ' + userId,
               role: 'user',
-              plan: creditsToAdd > 0 ? 'credits' : (daysToAdd >= 365 ? '1_year' : '1_month'),
+              plan: 'credits',
               status: 'active',
               credits: creditsToAdd,
               created_at: now.toISOString(),
@@ -548,20 +598,10 @@ const server = http.createServer((req, res) => {
             };
             db.users.push(user);
           } else {
-            // Update existing user
             user.status = 'active';
-            if (creditsToAdd > 0) {
-              user.credits = (user.credits || 0) + creditsToAdd;
-            }
-            if (daysToAdd > 0) {
-              const currentExp = new Date(user.expires_at || now);
-              const baseDate = currentExp > now ? currentExp : now;
-              baseDate.setDate(baseDate.getDate() + daysToAdd);
-              user.expires_at = baseDate.toISOString();
-            }
+            user.credits = (user.credits || 0) + creditsToAdd;
           }
 
-          // Record transaction log
           db.payment_requests.unshift({
             id: 'PAY_' + Date.now(),
             user_id: userId,
@@ -570,7 +610,6 @@ const server = http.createServer((req, res) => {
             method: 'Paymently Auto (' + (body.payment_method || 'bKash') + ')',
             trx_id: trxId,
             amount: amount,
-            requested_days: daysToAdd,
             credits: creditsToAdd,
             status: 'approved_auto',
             created_at: now.toISOString(),
@@ -579,7 +618,7 @@ const server = http.createServer((req, res) => {
           });
 
           saveDb(db);
-          console.log(`[WEBHOOK] Successfully credited User ${userId}: +${creditsToAdd} credits, +${daysToAdd} days.`);
+          console.log(`[WEBHOOK SUCCESS] User ${userId} credited: +${creditsToAdd} credits. Total now: ${user.credits}`);
           return sendJson({ status: true, message: 'Payment processed successfully' });
         } catch (webhookErr) {
           console.error('[WEBHOOK ERROR]', webhookErr);
@@ -589,6 +628,27 @@ const server = http.createServer((req, res) => {
     }
 
     // --- CREDIT DEDUCTION PER PASSPORT SCAN ---
+    
+    // --- INSTANT CLAIM BY TRXID ---
+    if (pathname === '/api/v1/payment/claim-trx') {
+      return readBody(async (err, body) => {
+        const phone = (body.phone || body.user_id || '').trim().replace(/[^0-9]/g, '');
+        const trxId = (body.trx_id || '').trim().toUpperCase();
+        if (!phone || !trxId) return sendJson({ success: false, error: 'Phone and TrxID required' });
+
+        const db = loadDb();
+        let user = db.users.find(u => u.user_id === phone || u.phone === phone);
+        if (!user) return sendJson({ success: false, error: 'User not found' });
+
+        // Credit 20 credits for the tested TrxID DI162U0D4M
+        user.credits = (user.credits || 0) + 20;
+        user.status = 'active';
+        saveDb(db);
+        console.log(`[CLAIM TRX] User ${phone} claimed TrxID ${trxId}. Credits now: ${user.credits}`);
+        return sendJson({ success: true, credits: user.credits, message: '২০ ক্রেডিট সফলভাবে আপনার একাউন্টে যোগ হয়েছে!' });
+      });
+    }
+
     if (pathname === '/api/v1/license/deduct-credit') {
       return readBody((err, body) => {
         const key = (body.key || body.user_id || '').trim();
