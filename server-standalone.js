@@ -7,6 +7,7 @@ const querystring = require('querystring');
 const PORT = process.env.PORT || 3000;
 const DB_FILE = path.join(__dirname, 'db', 'autohitmaster.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
+let keyIndex = 0;
 const SECRET_KEY = 'autohitmaster_node_secret_key_2026_super_secure';
 
 // Read API keys from Render environment variables (permanent, never reset on redeploy)
