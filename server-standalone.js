@@ -368,13 +368,15 @@ const server = http.createServer((req, res) => {
     
     // --- UDDOKTAPAY AUTOMATIC CHECKOUT CREATION ---
     
-    // --- PHONE NUMBER + PASSWORD AUTH (DEVICE-LOCKED FREE TRIAL + UNLIMITED MULTI-PC) ---
+    // --- PHONE NUMBER + PASSWORD AUTH (HARDWARE-LOCKED FREE TRIAL + UNLIMITED MULTI-PC) ---
     if (pathname === '/api/v1/auth/login-or-register') {
       return readBody((err, body) => {
         const phone = (body.phone || body.mobile || body.user_id || '').trim().replace(/[^0-9]/g, '');
         const password = (body.password || body.pin || '1234').trim();
         const name = (body.name || 'User ' + phone).trim();
-        const deviceId = (body.device_id || body.fp || '').trim();
+        const deviceId = (body.device_id || '').trim();
+        const hwFp = (body.hw_fp || body.hw_fingerprint || body.fp || '').trim();
+        const clientIp = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
 
         if (!phone || phone.length < 10) {
           return sendJson({ success: false, error: 'INVALID_PHONE', message: 'সঠিক মোবাইল নম্বর দিন (যেমন: 017xxxxxxxx)' });
@@ -392,12 +394,33 @@ const server = http.createServer((req, res) => {
         const now = new Date();
 
         if (!user) {
-          // Check if this device has already claimed the free trial
-          const hasClaimedTrial = deviceId && db.claimed_trial_devices.includes(deviceId);
+          // Check if this physical device (by device_id or hardware fingerprint) has already claimed free trial
+          let hasClaimedTrial = false;
+          for (const item of db.claimed_trial_devices) {
+            if (typeof item === 'string') {
+              if ((deviceId && item === deviceId) || (hwFp && item === hwFp)) {
+                hasClaimedTrial = true;
+                break;
+              }
+            } else if (item && typeof item === 'object') {
+              if ((deviceId && item.device_id === deviceId) || (hwFp && item.hw_fp === hwFp)) {
+                hasClaimedTrial = true;
+                break;
+              }
+            }
+          }
+
           const initialCredits = hasClaimedTrial ? 0 : 3;
 
-          if (deviceId && !hasClaimedTrial) {
-            db.claimed_trial_devices.push(deviceId);
+          // Record this device's claim
+          if (!hasClaimedTrial) {
+            db.claimed_trial_devices.push({
+              device_id: deviceId || null,
+              hw_fp: hwFp || null,
+              ip: clientIp || null,
+              phone: phone,
+              claimed_at: now.toISOString()
+            });
           }
 
           const expDate = new Date();
@@ -413,18 +436,20 @@ const server = http.createServer((req, res) => {
             credits: initialCredits,
             created_at: now.toISOString(),
             expires_at: expDate.toISOString(),
-            hwid: null, // Unlimited PCs allowed!
+            hwid: null, // Unlimited PCs allowed once registered/paid
             registered_device: deviceId || null,
-            notes: hasClaimedTrial ? 'Registered - Trial Already Claimed' : 'Registered - 3 Free Trial Credits Granted'
+            hardware_fp: hwFp || null,
+            registered_ip: clientIp || null,
+            notes: hasClaimedTrial ? 'Registered - Free Trial Already Claimed on this PC' : 'Registered - 3 Free Trial Credits Granted'
           };
           db.users.push(user);
           saveDb(db);
 
           const welcomeMsg = initialCredits > 0
-            ? 'একাউন্ট তৈরি হয়েছে! ৩টি ফ্রি আবেদন ক্রেডিট দেওয়া হলো।'
-            : 'একাউন্ট তৈরি হয়েছে! (এই ডিভাইসে পূর্বে ফ্রি ট্রায়াল নেওয়া হয়েছে, ব্যালেন্স: ৳০)';
+            ? 'একাউন্ট তৈরি হয়েছে! ৩টি ফ্রি ট্রায়াল ক্রেডিট দেওয়া হলো।'
+            : 'একাউন্ট তৈরি হয়েছে! (এই ডিভাইসে পূর্বে ফ্রি ট্রায়াল গ্রহণ করা হয়েছে, ফ্রি ব্যালেন্স: ৳০)';
 
-          console.log(`[NEW USER] ${phone} registered from device ${deviceId}. Credits: ${initialCredits}`);
+          console.log(`[REGISTRATION] Phone: ${phone} | HW_FP: ${hwFp} | IP: ${clientIp} | Trial Granted: ${initialCredits > 0 ? 'YES (3 Credits)' : 'BLOCKED (0 Credits)'}`);
           return sendJson({
             success: true,
             is_new: true,
