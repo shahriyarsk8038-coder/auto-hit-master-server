@@ -175,9 +175,9 @@ const server = http.createServer((req, res) => {
       const settings = db.settings || {};
 
       // Use DB keys first, fallback to Render environment variables (permanent)
-      const geminiKeys = ((settings.gemini_keys || []).filter(k => k && k.trim().startsWith('AIzaSy')).length > 0
-        ? settings.gemini_keys.filter(k => k && k.trim().startsWith('AIzaSy'))
-        : ENV_GEMINI_KEYS).filter(k => k && k.trim().startsWith('AIzaSy'));
+      const geminiKeys = ((settings.gemini_keys || []).filter(k => k && k.trim().length > 10).length > 0
+        ? settings.gemini_keys.filter(k => k && k.trim().length > 10)
+        : ENV_GEMINI_KEYS).filter(k => k && k.trim().length > 10);
       const groqKeys = ((settings.groq_keys || []).filter(k => k && k.trim()).length > 0
         ? settings.groq_keys
         : ENV_GROQ_KEYS).filter(k => k && k.trim());
