@@ -165,6 +165,9 @@ const server = http.createServer((req, res) => {
       if (!admin) return redirect('/admin/login');
       return renderCreateUser(admin);
     }
+    if (pathname === '/privacy' || pathname === '/privacy-policy') {
+      return renderPrivacyPolicy();
+    }
     if (pathname === '/admin/settings') {
       const admin = getSessionAdmin();
       if (!admin) return redirect('/admin/login');
@@ -1412,6 +1415,63 @@ const server = http.createServer((req, res) => {
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>`;
+    sendHtml(html);
+  }
+
+  function renderPrivacyPolicy() {
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy - Auto Fill Master</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; max-width: 800px; margin: 40px auto; padding: 0 20px; color: #333; background: #fff; }
+    h1 { color: #1a73e8; border-bottom: 2px solid #eaeaea; padding-bottom: 10px; }
+    h2 { color: #202124; margin-top: 30px; font-size: 1.3rem; }
+    p, li { color: #4a4a4a; font-size: 1rem; }
+    ul { padding-left: 20px; }
+    .updated { color: #70757a; font-size: 0.9em; margin-bottom: 30px; }
+    .contact { background: #f8f9fa; padding: 15px 20px; border-radius: 8px; border-left: 4px solid #1a73e8; margin-top: 30px; }
+  </style>
+</head>
+<body>
+  <h1>Privacy Policy for Auto Fill Master</h1>
+  <p class="updated">Last updated: September 3, 2026</p>
+  
+  <p>Auto Fill Master ("we", "our", or "extension") is dedicated to protecting the privacy of our users. This Privacy Policy outlines how our Google Chrome extension handles your data.</p>
+  
+  <h2>1. Single Purpose & Data Handling</h2>
+  <p>The sole purpose of Auto Fill Master is to assist users in automatically filling out visa application forms on the official Indian visa application portal using data extracted from their travel documents.</p>
+  
+  <h2>2. What Information We Process</h2>
+  <ul>
+    <li><strong>Document & Applicant Details:</strong> Details such as applicant name, passport number, dates of birth/expiry, address details, and references extracted from uploaded passport photos or previous application documents.</li>
+    <li><strong>Temporary Application IDs:</strong> Application reference numbers captured from the official visa portal to help applicants track their submissions.</li>
+  </ul>
+
+  <h2>3. How Data is Stored and Handled</h2>
+  <ul>
+    <li><strong>Local Browser Storage Only:</strong> All applicant profiles, preferences, and temporary IDs are stored locally on your device using Chrome's secure storage (<code>chrome.storage.local</code>). We do NOT store or sell your personal applicant records on marketing servers.</li>
+    <li><strong>Document OCR & AI Parsing:</strong> Uploaded documents are transmitted via secure encrypted HTTPS strictly for the automated extraction of text fields to populate your application form.</li>
+  </ul>
+
+  <h2>4. No Sale or Transfer of Data</h2>
+  <p>We do not sell, rent, or trade personal data to third parties. Data is never used for advertising, marketing, or creditworthiness evaluation.</p>
+
+  <h2>5. Permissions Justification</h2>
+  <ul>
+    <li><code>storage</code>: To save applicant profiles and settings locally on your browser.</li>
+    <li><code>scripting</code> & <code>activeTab</code>: To fill form fields on the official Indian visa portal upon user request.</li>
+    <li><code>sidePanel</code>: To show the applicant profile manager beside the visa website.</li>
+  </ul>
+
+  <div class="contact">
+    <strong>Contact Us:</strong><br>
+    If you have any questions or concerns regarding this Privacy Policy, please contact developer support at: <strong>shahriyarsk8038@gmail.com</strong>
+  </div>
 </body>
 </html>`;
     sendHtml(html);
