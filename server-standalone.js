@@ -758,8 +758,8 @@ const server = http.createServer((req, res) => {
         }
 
         const currentCredits = Number(user.credits) || 0;
-        if (currentCredits < 0.5) {
-          return sendJson({ ok: false, error: 'INSUFFICIENT_BALANCE', message: 'ক্যাপচা অটো-সলভ করার পর্যাপ্ত ব্যালেন্স নেই (কমপক্ষে ৳০.৫০ প্রয়োজন)। অনুগ্রহ করে রিচার্জ করুন।' });
+        if (currentCredits < 0.05) {
+          return sendJson({ ok: false, error: 'INSUFFICIENT_BALANCE', message: 'ক্যাপচা অটো-সলভ করার পর্যাপ্ত ব্যালেন্স নেই (কমপক্ষে ৳০.০৫ প্রয়োজন)। অনুগ্রহ করে রিচার্জ করুন।' });
         }
 
         const capKey = (db.settings && db.settings.capmonster_key) || CAPMONSTER_API_KEY || '';
@@ -838,17 +838,17 @@ const server = http.createServer((req, res) => {
             return sendJson({ ok: false, error: 'TIMEOUT', message: 'ক্যাপচা সমাধান করতে অতিরিক্ত সময় লেগেছে।' });
           }
 
-          // Deduct ৳0.50 (50 poisha)
-          user.credits = Math.round((currentCredits - 0.5) * 100) / 100;
+          // Deduct ৳0.05 (5 poisha)
+          user.credits = Math.round((currentCredits - 0.05) * 100) / 100;
           saveDb(db);
-          console.log(`[CAPTCHA] User ${phone} solved: "${solutionText}". Deducted ৳0.50. Remaining: ৳${user.credits}`);
+          console.log(`[CAPTCHA] User ${phone} solved: "${solutionText}". Deducted ৳0.05. Remaining: ৳${user.credits}`);
 
           return sendJson({
             ok: true,
             text: solutionText,
             credits: user.credits,
-            deducted: 0.5,
-            message: 'ক্যাপচা সফলভাবে সমাধান হয়েছে (৳০.৫০ কর্তন করা হয়েছে)।'
+            deducted: 0.05,
+            message: 'ক্যাপচা সফলভাবে সমাধান হয়েছে (৳০.০৫ কর্তন করা হয়েছে)।'
           });
         } catch (err) {
           console.error('[CAPTCHA_ERR]', err);
