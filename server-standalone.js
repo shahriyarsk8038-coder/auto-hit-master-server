@@ -95,6 +95,9 @@ function loadDb() {
         data.settings.gemini_keys = decoded;
       }
     }
+    if (data.settings.capmonster_key_b64 && !data.settings.capmonster_key) {
+      data.settings.capmonster_key = Buffer.from(data.settings.capmonster_key_b64, 'base64').toString('utf8');
+    }
 
     data.users.forEach(u => {
       if (u.payment_amount === undefined) u.payment_amount = '';
@@ -109,6 +112,9 @@ function loadDb() {
 function saveDb(dbData) {
   if (dbData && dbData.settings && Array.isArray(dbData.settings.gemini_keys) && dbData.settings.gemini_keys.length > 0) {
     dbData.settings.gemini_keys_b64 = dbData.settings.gemini_keys.map(k => Buffer.from(k).toString('base64'));
+  }
+  if (dbData && dbData.settings && dbData.settings.capmonster_key) {
+    dbData.settings.capmonster_key_b64 = Buffer.from(dbData.settings.capmonster_key).toString('base64');
   }
   fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2));
   try {
@@ -1779,7 +1785,7 @@ function filterUsers() {
 
         <div class="mb-4">
           <label class="form-label fs-5">🤖 CapMonster Cloud API Key (Visa Captcha Auto-Solve):</label>
-          <div class="text-muted small mb-2">Each solve will cost your users ৳0.50 (50 poisha) from their balance. Key stays secure on server!</div>
+          <div class="text-muted small mb-2">Each solve will cost your users ৳0.05 (5 poisha) from their balance. Key stays secure on server!</div>
           <input type="password" name="capmonster_key" class="form-control font-monospace" placeholder="Paste CapMonster Client Key" value="${capKey}">
         </div>
 
