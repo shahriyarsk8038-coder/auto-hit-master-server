@@ -1080,6 +1080,7 @@ const server = http.createServer((req, res) => {
         const custom_date = (body.custom_expiry_date || '').trim();
         const set_exact_days = (body.set_exact_days || '').trim();
         const days = parseInt(body.duration_days, 10) || 30;
+        const initialCredits = (body.credits !== undefined && body.credits !== '') ? (parseFloat(body.credits) || 0) : 20;
 
         if (!userId || !password) {
           return renderCreateUser(admin, 'User ID and Password are required.');
@@ -1108,6 +1109,7 @@ const server = http.createServer((req, res) => {
           password_hash: hashPassword(password),
           name: name,
           phone: phone,
+          credits: initialCredits,
           payment_amount: payment_amount,
           payment_note: payment_note,
           status: 'active',
@@ -1130,6 +1132,10 @@ const server = http.createServer((req, res) => {
         if (user) {
           if (body.payment_amount !== undefined) user.payment_amount = String(body.payment_amount).trim();
           if (body.payment_note !== undefined) user.payment_note = String(body.payment_note).trim();
+          if (body.credits !== undefined && body.credits !== '') {
+            const numCreds = parseFloat(body.credits);
+            if (!isNaN(numCreds)) user.credits = Math.round(numCreds * 100) / 100;
+          }
 
           const exactDaysStr = (body.set_exact_days || '').trim();
           if (exactDaysStr !== '') {
@@ -1315,16 +1321,19 @@ const server = http.createServer((req, res) => {
     const active = db.users.filter(u => u.status === 'active' && new Date(u.expires_at) > now).length;
     const expired = db.users.filter(u => new Date(u.expires_at) <= now).length;
     const pendingReqs = (db.payment_requests || []).filter(r => r.status === 'pending').length;
-    const recent = db.users.slice(0, 5);
+    const totalCredits = db.users.reduce((sum, u) => sum + (Number(u.credits) || 0), 0);
+    const recent = db.users.slice(0, 8);
 
     let recentRows = '';
     recent.forEach(u => {
+      const balance = u.credits != null ? Number(u.credits).toFixed(1) : '0';
       recentRows += `<tr>
-        <td class="fw-bold text-info fs-6">${u.user_id}</td>
-        <td class="text-white fw-bold">${u.name || '-'}</td>
-        <td>${u.payment_amount ? `<span class="badge bg-info text-dark fw-bold">৳${u.payment_amount}</span>` : '-'}</td>
-        <td><span class="badge bg-${u.status === 'active' ? 'success' : 'danger'} fw-bold">${u.status}</span></td>
-        <td class="text-white fw-bold">${u.expires_at.substring(0, 10)}</td>
+        <td class="fw-bold text-info">${u.user_id}</td>
+        <td class="text-white">${u.name || '-'}</td>
+        <td><span class="badge bg-success-subtle text-success border border-success fw-bold px-2 py-1">৳${balance}</span></td>
+        <td>${u.payment_amount ? `<span class="badge bg-info text-dark fw-bold">৳${u.payment_amount}</span>` : '<span class="text-secondary small">-</span>'}</td>
+        <td><span class="badge bg-${u.status === 'active' ? 'success' : 'danger'} fw-semibold">${u.status}</span></td>
+        <td class="text-secondary font-monospace small">${u.expires_at.substring(0, 10)}</td>
       </tr>`;
     });
 
@@ -1336,7 +1345,11 @@ const server = http.createServer((req, res) => {
   <meta charset="utf-8">
   <title>Dashboard - Auto Fill Master</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <style>body { background:#0f172a; color:#fff; } .sidebar { background:#1e293b; min-height:100vh; width:240px; padding:20px; } .stat { background:#1e293b; border:1px solid #334155; padding:20px; border-radius:10px; }</style>
+  <style>
+    body { background:#0b0f19; color:#f8fafc; font-family:'Segoe UI', system-ui, -apple-system, sans-serif; }
+    .sidebar { background:#111827; min-height:100vh; width:240px; padding:24px 20px; border-right:1px solid #1f2937; }
+    .stat { background:#111827; border:1px solid #1f2937; padding:20px; border-radius:12px; }
+  </style>
 </head>
 <body>
 <div class="d-flex">
@@ -1345,7 +1358,7 @@ const server = http.createServer((req, res) => {
       <img src="/logo.png" style="width:32px; height:32px; object-fit:contain;">
       <h4 class="text-info fw-bold mb-0">Auto Fill Master</h4>
     </div>
-    <a href="/admin/dashboard" class="d-block text-white mb-3 text-decoration-none font-weight-bold">📌 Dashboard</a>
+    <a href="/admin/dashboard" class="d-block text-white mb-3 text-decoration-none fw-bold">📌 Dashboard</a>
     <a href="/admin/users" class="d-block text-light mb-3 text-decoration-none">👥 Users & Licenses</a>
     <a href="/admin/payments" class="d-block text-light mb-3 text-decoration-none">📩 Payment Requests ${pendingBadge}</a>
     <a href="/admin/settings" class="d-block text-light mb-3 text-decoration-none">⚙️ Central AI Keys</a>
@@ -1355,17 +1368,19 @@ const server = http.createServer((req, res) => {
   <div class="p-4 flex-grow-1">
     <h2 class="fw-bold mb-4 text-white">Overview Dashboard</h2>
     <div class="row g-3 mb-4">
-      <div class="col-md-3"><div class="stat"><div class="text-info fw-bold small">TOTAL USERS</div><div class="fs-2 text-white fw-bold">${total}</div></div></div>
-      <div class="col-md-3"><div class="stat"><div class="text-info fw-bold small">ACTIVE</div><div class="fs-2 text-success fw-bold">${active}</div></div></div>
-      <div class="col-md-3"><div class="stat"><div class="text-info fw-bold small">EXPIRED</div><div class="fs-2 text-warning fw-bold">${expired}</div></div></div>
-      <div class="col-md-3"><div class="stat"><div class="text-info fw-bold small">PENDING PAYMENTS</div><div class="fs-2 text-danger fw-bold">${pendingReqs}</div></div></div>
+      <div class="col-md-3"><div class="stat"><div class="text-info fw-bold small text-uppercase">Total Users</div><div class="fs-2 text-white fw-bold mt-1">${total}</div></div></div>
+      <div class="col-md-3"><div class="stat"><div class="text-success fw-bold small text-uppercase">Active Licenses</div><div class="fs-2 text-success fw-bold mt-1">${active}</div></div></div>
+      <div class="col-md-3"><div class="stat"><div class="text-info fw-bold small text-uppercase">System Balance</div><div class="fs-2 text-info fw-bold mt-1">৳${totalCredits.toFixed(1)}</div></div></div>
+      <div class="col-md-3"><div class="stat"><div class="text-warning fw-bold small text-uppercase">Pending Payments</div><div class="fs-2 text-warning fw-bold mt-1">${pendingReqs}</div></div></div>
     </div>
     <div class="stat">
       <h5 class="fw-bold mb-3 text-white">Recently Added Accounts</h5>
-      <table class="table table-dark align-middle">
-        <thead><tr style="color:#38bdf8;"><th style="color:#38bdf8;">USER ID</th><th style="color:#38bdf8;">NAME</th><th style="color:#38bdf8;">PAYMENT</th><th style="color:#38bdf8;">STATUS</th><th style="color:#38bdf8;">EXPIRY</th></tr></thead>
-        <tbody>${recentRows || '<tr><td colspan="5" class="text-muted">No users found. Click "Add New User" to create one.</td></tr>'}</tbody>
-      </table>
+      <div class="table-responsive">
+        <table class="table table-dark table-hover align-middle mb-0">
+          <thead><tr style="color:#38bdf8;"><th style="color:#38bdf8;">USER ID</th><th style="color:#38bdf8;">NAME</th><th style="color:#38bdf8;">BALANCE</th><th style="color:#38bdf8;">PAYMENT</th><th style="color:#38bdf8;">STATUS</th><th style="color:#38bdf8;">EXPIRY</th></tr></thead>
+          <tbody>${recentRows || '<tr><td colspan="6" class="text-muted py-3 text-center">No users found. Click "Add New User" to create one.</td></tr>'}</tbody>
+        </table>
+      </div>
     </div>
   </div>
 </div>
@@ -1380,86 +1395,212 @@ const server = http.createServer((req, res) => {
     const pendingReqs = (db.payment_requests || []).filter(r => r.status === 'pending').length;
     const pendingBadge = pendingReqs > 0 ? `<span class="badge bg-danger ms-1">${pendingReqs}</span>` : '';
     let rows = '';
+    let modalsHtml = '';
 
     db.users.forEach(u => {
       const expDt = new Date(u.expires_at);
       const isExp = now > expDt;
       const daysLeft = Math.max(0, Math.ceil((expDt - now) / (1000 * 60 * 60 * 24)));
-      const hwidBadge = u.hwid ? '<span class="badge bg-secondary fw-bold">PC Locked</span>' : '<span class="badge bg-success fw-bold">Unbound</span>';
-      const statusBadge = u.status === 'suspended' ? '<span class="badge bg-danger fw-bold">Suspended</span>' : (isExp ? '<span class="badge bg-warning text-dark fw-bold">Expired</span>' : '<span class="badge bg-success fw-bold">Active</span>');
+      const hwidBadge = u.hwid 
+        ? `<span class="badge bg-secondary fw-semibold" title="PC Locked: ${String(u.hwid).substring(0, 10)}...">🔒 Locked</span>` 
+        : `<span class="badge bg-dark border border-secondary text-secondary fw-semibold">🔓 Free</span>`;
+      const statusBadge = u.status === 'suspended' 
+        ? '<span class="badge bg-danger fw-bold">Suspended</span>' 
+        : (isExp ? '<span class="badge bg-warning text-dark fw-bold">Expired</span>' : '<span class="badge bg-success fw-bold">Active</span>');
       const yyyyMmDd = u.expires_at.substring(0, 10);
-      const payInfo = u.payment_amount ? `<span class="badge bg-info text-dark fw-bold">৳${u.payment_amount}</span> <small class="text-light fw-bold">${u.payment_note || ''}</small>` : '<span class="text-light small">No record</span>';
+      const balance = u.credits != null ? Number(u.credits).toFixed(1) : '0';
+      const safeId = String(u.user_id).replace(/[^a-zA-Z0-9]/g, '_');
+      const editModalId = 'editModal_' + safeId;
+      const payModalId = 'payModal_' + safeId;
 
-      const modalId = 'modal_' + u.user_id.replace(/[^a-zA-Z0-9]/g, '_');
+      // Find user payment transactions
+      const userReqs = (db.payment_requests || []).filter(r => (r.user_id === u.user_id || r.target_user_id === u.user_id));
+      const payCount = userReqs.length;
+      const payAmount = u.payment_amount ? u.payment_amount : (userReqs.reduce((sum, r) => sum + (Number(r.amount) || 0), 0) || '0');
 
       rows += `<tr>
-        <td class="fw-bold text-info fs-6" style="color:#38bdf8 !important;">${u.user_id}</td>
-        <td class="text-white fw-bold" style="color:#ffffff !important;">${u.name || '-'}</td>
-        <td>${payInfo}</td>
+        <td>
+          <div class="fw-bold text-info fs-6" style="color:#38bdf8 !important;">${u.user_id}</div>
+          <div class="text-light small">${u.name || ''}${u.phone ? ` • <span class="text-secondary">${u.phone}</span>` : ''}</div>
+        </td>
+        <td>
+          <span class="badge bg-success-subtle text-success border border-success px-2 py-1 fs-6 fw-bold">৳${balance}</span>
+        </td>
+        <td>
+          <button type="button" class="btn btn-sm btn-outline-info rounded-pill px-3 py-1 fw-bold text-nowrap" data-bs-toggle="modal" data-bs-target="#${payModalId}" title="Click to view payment history">
+            💳 ৳${payAmount} ${payCount > 0 ? `<span class="badge bg-info text-dark rounded-circle ms-1">${payCount}</span>` : ''}
+          </button>
+        </td>
         <td>${hwidBadge}</td>
         <td>${statusBadge}</td>
-        <td class="text-white fw-bold" style="color:#ffffff !important;">${yyyyMmDd}</td>
-        <td class="fw-bold ${isExp ? 'text-danger' : 'text-success'}" style="font-size:15px;">${daysLeft} Days</td>
         <td>
-          <div class="btn-group btn-group-sm">
-            <form action="/admin/users/${encodeURIComponent(u.user_id)}/renew" method="POST" style="display:inline-block;">
-              <select name="extend_days" onchange="this.form.submit()" class="form-select form-select-sm bg-dark text-white border-info fw-bold" style="width:110px;">
-                <option value="">+ Renew</option>
-                <option value="7">+ 7 Days</option>
-                <option value="30">+ 30 Days</option>
-                <option value="90">+ 90 Days</option>
-                <option value="365">+ 1 Year</option>
-              </select>
-            </form>
-            <button class="btn btn-sm btn-outline-info fw-bold" data-bs-toggle="modal" data-bs-target="#${modalId}">✏️ Custom Days/Date</button>
-            ${u.hwid ? `<form action="/admin/users/${encodeURIComponent(u.user_id)}/reset-pc" method="POST" style="display:inline-block;"><button class="btn btn-sm btn-outline-warning fw-bold">Reset PC</button></form>` : ''}
-            <form action="/admin/users/${encodeURIComponent(u.user_id)}/toggle-status" method="POST" style="display:inline-block;"><button class="btn btn-sm btn-outline-secondary fw-bold">Toggle</button></form>
-            <form action="/admin/users/${encodeURIComponent(u.user_id)}/delete" method="POST" style="display:inline-block;" onsubmit="return confirm('Delete user ${u.user_id}?');"><button class="btn btn-sm btn-outline-danger fw-bold">X</button></form>
-          </div>
-
-          <div class="modal fade" id="${modalId}" tabindex="-1">
-            <div class="modal-dialog modal-dialog-centered">
-              <div class="modal-content bg-dark text-white border-info">
-                <div class="modal-header border-secondary">
-                  <h5 class="modal-title text-info fw-bold">Edit User, Days & Payment - ${u.user_id}</h5>
-                  <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <form action="/admin/users/update-user-payment" method="POST">
-                  <input type="hidden" name="target_user_id" value="${u.user_id}">
-                  <div class="modal-body text-start">
-                    <div class="mb-3">
-                      <label class="text-info fw-bold small d-block mb-1">১. কত দিন মেয়াদ দিতে চান? (SET EXACT DAYS LEFT)</label>
-                      <input type="number" name="set_exact_days" class="form-control bg-dark text-white border-info fw-bold" value="${daysLeft}" placeholder="যেমন: 15 বা 45 বা 60">
-                      <div class="text-warning small mt-1">💡 আজ থেকে ঠিক কত দিন পর্যন্ত মেয়াদ রাখতে চান টাইপ করুন।</div>
-                    </div>
-                    <div class="mb-3">
-                      <label class="text-info fw-bold small d-block mb-1">২. অথবা কাস্টম মেয়াদের তারিখ (OR SELECT EXACT DATE)</label>
-                      <input type="date" name="custom_expiry_date" class="form-control bg-dark text-white border-secondary fw-bold" value="${yyyyMmDd}">
-                    </div>
-                    <hr class="border-secondary mb-3">
-                    <div class="mb-3">
-                      <label class="text-info fw-bold small d-block mb-1">৩. পেমেন্টের পরিমাণ (PAYMENT AMOUNT ৳)</label>
-                      <input type="text" name="payment_amount" class="form-control bg-dark text-white border-secondary fw-bold" value="${u.payment_amount || ''}" placeholder="যেমন: 500 বা 1500">
-                    </div>
-                    <div class="mb-3">
-                      <label class="text-info fw-bold small d-block mb-1">৪. পেমেন্টের নোট / মাধ্যম (PAYMENT NOTE)</label>
-                      <input type="text" name="payment_note" class="form-control bg-dark text-white border-secondary fw-bold" value="${u.payment_note || ''}" placeholder="যেমন: bKash - 22 Aug">
-                    </div>
-                  </div>
-                  <div class="modal-footer border-secondary">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-primary fw-bold">Save Changes for ${u.user_id}</button>
-                  </div>
-                </form>
-              </div>
+          <div class="fw-bold ${isExp ? 'text-danger' : 'text-success'}">${daysLeft} Days</div>
+          <small class="text-secondary font-monospace">${yyyyMmDd}</small>
+        </td>
+        <td>
+          <div class="d-flex align-items-center gap-1">
+            <button class="btn btn-sm btn-outline-info fw-bold px-2 py-1 text-nowrap" data-bs-toggle="modal" data-bs-target="#${editModalId}">✏️ Edit</button>
+            <div class="dropdown">
+              <button class="btn btn-sm btn-secondary dropdown-toggle px-2 py-1" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                ⚙️
+              </button>
+              <ul class="dropdown-menu dropdown-menu-dark dropdown-menu-end shadow">
+                <li><h6 class="dropdown-header text-info">Quick Renew</h6></li>
+                <li><form action="/admin/users/${encodeURIComponent(u.user_id)}/renew" method="POST"><input type="hidden" name="extend_days" value="7"><button type="submit" class="dropdown-item">+ 7 Days</button></form></li>
+                <li><form action="/admin/users/${encodeURIComponent(u.user_id)}/renew" method="POST"><input type="hidden" name="extend_days" value="30"><button type="submit" class="dropdown-item">+ 30 Days (1 Month)</button></form></li>
+                <li><form action="/admin/users/${encodeURIComponent(u.user_id)}/renew" method="POST"><input type="hidden" name="extend_days" value="90"><button type="submit" class="dropdown-item">+ 90 Days (3 Months)</button></form></li>
+                <li><form action="/admin/users/${encodeURIComponent(u.user_id)}/renew" method="POST"><input type="hidden" name="extend_days" value="365"><button type="submit" class="dropdown-item">+ 1 Year</button></form></li>
+                <li><hr class="dropdown-divider border-secondary"></li>
+                ${u.hwid ? `<li><form action="/admin/users/${encodeURIComponent(u.user_id)}/reset-pc" method="POST"><button type="submit" class="dropdown-item text-warning">🔓 Reset PC Lock</button></form></li>` : ''}
+                <li><form action="/admin/users/${encodeURIComponent(u.user_id)}/toggle-status" method="POST"><button type="submit" class="dropdown-item text-light">⏯️ Toggle Status (${u.status === 'active' ? 'Suspend' : 'Activate'})</button></form></li>
+                <li><hr class="dropdown-divider border-secondary"></li>
+                <li><form action="/admin/users/${encodeURIComponent(u.user_id)}/delete" method="POST" onsubmit="return confirm('Are you sure you want to delete user ${u.user_id}?');"><button type="submit" class="dropdown-item text-danger">🗑️ Delete User</button></form></li>
+              </ul>
             </div>
           </div>
         </td>
       </tr>`;
+
+      // 1. Edit User Modal
+      modalsHtml += `
+      <div class="modal fade" id="${editModalId}" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content bg-dark text-white border border-info shadow-lg">
+            <div class="modal-header border-secondary">
+              <h5 class="modal-title text-info fw-bold">✏️ Edit Account: ${u.user_id}</h5>
+              <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form action="/admin/users/update-user-payment" method="POST">
+              <input type="hidden" name="target_user_id" value="${u.user_id}">
+              <div class="modal-body text-start">
+                <div class="mb-3">
+                  <label class="text-info fw-bold small d-block mb-1">১. মেয়াদের দিন সংখ্যা (SET EXACT DAYS LEFT)</label>
+                  <input type="number" name="set_exact_days" class="form-control bg-dark text-white border-info fw-bold" value="${daysLeft}" placeholder="যেমন: 15 বা 45 বা 60">
+                  <div class="text-secondary small mt-1">আজ থেকে কত দিন পর্যন্ত মেয়াদ থাকবে।</div>
+                </div>
+                <div class="mb-3">
+                  <label class="text-info fw-bold small d-block mb-1">২. অথবা মেয়াদের শেষ তারিখ (EXACT EXPIRY DATE)</label>
+                  <input type="date" name="custom_expiry_date" class="form-control bg-dark text-white border-secondary fw-bold" value="${yyyyMmDd}">
+                </div>
+                <div class="mb-3">
+                  <label class="text-success fw-bold small d-block mb-1">৩. ক্যাশ ব্যালেন্স / ক্রেডিট (BALANCE ৳)</label>
+                  <input type="number" step="0.5" name="credits" class="form-control bg-dark text-white border-success fw-bold" value="${u.credits != null ? u.credits : 0}">
+                  <div class="text-secondary small mt-1">ক্যাপচা ও স্ক্যানিং খরচের জন্য কাস্টমারের বর্তমান ব্যালেন্স।</div>
+                </div>
+                <hr class="border-secondary mb-3">
+                <div class="mb-3">
+                  <label class="text-info fw-bold small d-block mb-1">৪. পেমেন্টের মোট পরিমাণ (TOTAL PAYMENT ৳)</label>
+                  <input type="text" name="payment_amount" class="form-control bg-dark text-white border-secondary fw-bold" value="${u.payment_amount || ''}" placeholder="যেমন: 500">
+                </div>
+                <div class="mb-3">
+                  <label class="text-info fw-bold small d-block mb-1">৫. পেমেন্ট নোট / মাধ্যম / TrxID (NOTE)</label>
+                  <input type="text" name="payment_note" class="form-control bg-dark text-white border-secondary fw-bold" value="${u.payment_note || ''}" placeholder="যেমন: bKash (017...) - TrxID: ...">
+                </div>
+              </div>
+              <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" class="btn btn-primary fw-bold">💾 Save Changes</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. Payment Details & History Modal -->
+      <div class="modal fade" id="${payModalId}" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+          <div class="modal-content bg-dark text-white border border-info shadow-lg">
+            <div class="modal-header border-secondary">
+              <h5 class="modal-title text-info fw-bold">💳 Payment Details & History: ${u.user_id}</h5>
+              <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-start">
+              <div class="row g-3 mb-3">
+                <div class="col-md-4">
+                  <div class="p-3 rounded bg-secondary bg-opacity-25 border border-secondary text-center">
+                    <div class="text-secondary small fw-bold">TOTAL PAID</div>
+                    <div class="fs-3 text-info fw-bold">৳${payAmount}</div>
+                  </div>
+                </div>
+                <div class="col-md-4">
+                  <div class="p-3 rounded bg-secondary bg-opacity-25 border border-secondary text-center">
+                    <div class="text-secondary small fw-bold">CURRENT BALANCE</div>
+                    <div class="fs-3 text-success fw-bold">৳${balance}</div>
+                  </div>
+                </div>
+                <div class="col-md-4">
+                  <div class="p-3 rounded bg-secondary bg-opacity-25 border border-secondary text-center">
+                    <div class="text-secondary small fw-bold">ONLINE RECORDS</div>
+                    <div class="fs-5 text-white fw-bold mt-1">${payCount > 0 ? `${payCount} Request(s)` : 'No Online Req'}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="p-3 rounded bg-secondary bg-opacity-10 border border-secondary mb-3">
+                <div class="text-info fw-bold small mb-1">📌 LATEST PAYMENT NOTE / RECORD:</div>
+                <div class="text-white font-monospace">${u.payment_note || '<span class="text-muted">No note recorded</span>'}</div>
+              </div>
+
+              ${userReqs.length > 0 ? `
+                <h6 class="text-info fw-bold mt-3 mb-2">📜 Transaction History</h6>
+                <div class="table-responsive mb-3">
+                  <table class="table table-dark table-sm table-bordered align-middle mb-0">
+                    <thead>
+                      <tr class="text-info">
+                        <th>Date</th>
+                        <th>Method</th>
+                        <th>Sender Mobile</th>
+                        <th>TrxID</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${userReqs.map(r => `
+                        <tr>
+                          <td class="small text-secondary">${r.created_at ? new Date(r.created_at).toLocaleDateString() : '-'}</td>
+                          <td><span class="badge bg-primary">${r.method || 'bKash'}</span></td>
+                          <td class="text-white fw-bold">${r.sender_mobile || '-'}</td>
+                          <td class="text-warning font-monospace small">${r.trx_id || '-'}</td>
+                          <td class="text-success fw-bold">৳${r.amount || 0}</td>
+                          <td><span class="badge bg-${r.status === 'approved' ? 'success' : (r.status === 'pending' ? 'warning text-dark' : 'danger')}">${r.status}</span></td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                </div>
+              ` : ''}
+
+              <hr class="border-secondary my-3">
+              <form action="/admin/users/update-user-payment" method="POST">
+                <input type="hidden" name="target_user_id" value="${u.user_id}">
+                <h6 class="text-info fw-bold mb-2">✏️ Quick Update Payment / Note</h6>
+                <div class="row g-2">
+                  <div class="col-md-4">
+                    <label class="text-secondary small fw-bold">Payment Amount (৳)</label>
+                    <input type="text" name="payment_amount" class="form-control form-control-sm bg-dark text-white border-secondary fw-bold" value="${u.payment_amount || ''}" placeholder="500">
+                  </div>
+                  <div class="col-md-5">
+                    <label class="text-secondary small fw-bold">Payment Note / TrxID</label>
+                    <input type="text" name="payment_note" class="form-control form-control-sm bg-dark text-white border-secondary fw-bold" value="${u.payment_note || ''}" placeholder="bKash (017...) Trx: ...">
+                  </div>
+                  <div class="col-md-3 d-flex align-items-end">
+                    <button type="submit" class="btn btn-sm btn-primary fw-bold w-100">Update Record</button>
+                  </div>
+                </div>
+              </form>
+            </div>
+            <div class="modal-footer border-secondary py-2">
+              <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      `;
     });
 
-    const msgAlert = msg ? `<div class="alert alert-success py-2 font-weight-bold fw-bold text-dark" style="background:#dcfce7; border-color:#86efac;">${msg}</div>` : '';
-    const errAlert = error ? `<div class="alert alert-danger py-2 font-weight-bold fw-bold">${error}</div>` : '';
+    const msgAlert = msg ? `<div class="alert alert-success py-2 fw-bold text-dark" style="background:#dcfce7; border-color:#86efac;">${msg}</div>` : '';
+    const errAlert = error ? `<div class="alert alert-danger py-2 fw-bold">${error}</div>` : '';
 
     const html = `<!DOCTYPE html>
 <html>
@@ -1467,13 +1608,13 @@ const server = http.createServer((req, res) => {
   <meta charset="utf-8">
   <title>Users & Licenses - Auto Fill Master</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
   <style>
-    body { background:#0f172a; color:#fff; font-family:'Segoe UI', sans-serif; }
-    .sidebar { background:#1e293b; min-height:100vh; width:240px; padding:20px; }
-    .stat { background:#1e293b; border:1px solid #334155; padding:20px; border-radius:10px; }
-    th { color:#38bdf8 !important; font-weight:700 !important; text-transform:uppercase; font-size:13px; }
+    body { background:#0b0f19; color:#f8fafc; font-family:'Segoe UI', system-ui, -apple-system, sans-serif; }
+    .sidebar { background:#111827; min-height:100vh; width:240px; padding:24px 20px; border-right:1px solid #1f2937; }
+    .stat { background:#111827; border:1px solid #1f2937; padding:20px; border-radius:12px; }
+    th { color:#38bdf8 !important; font-weight:700 !important; text-transform:uppercase; font-size:12px; letter-spacing:0.5px; }
     td { color:#ffffff !important; font-size:14px; }
+    .table-hover tbody tr:hover td { background-color: rgba(56, 189, 248, 0.05); }
   </style>
 </head>
 <body>
@@ -1484,27 +1625,59 @@ const server = http.createServer((req, res) => {
       <h4 class="text-info fw-bold mb-0">Auto Fill Master</h4>
     </div>
     <a href="/admin/dashboard" class="d-block text-light mb-3 text-decoration-none">📌 Dashboard</a>
-    <a href="/admin/users" class="d-block text-white mb-3 text-decoration-none font-weight-bold">👥 Users & Licenses</a>
+    <a href="/admin/users" class="d-block text-white mb-3 text-decoration-none fw-bold">👥 Users & Licenses</a>
     <a href="/admin/payments" class="d-block text-light mb-3 text-decoration-none">📩 Payment Requests ${pendingBadge}</a>
     <a href="/admin/settings" class="d-block text-light mb-3 text-decoration-none">⚙️ Central AI Keys</a>
     <a href="/admin/users/create" class="d-block text-light mb-3 text-decoration-none">➕ Add New User</a>
     <a href="/admin/logout" class="d-block text-danger mt-5 text-decoration-none">🚪 Logout</a>
   </div>
   <div class="p-4 flex-grow-1">
-    <div class="d-flex justify-content-between mb-4">
-      <h2 class="fw-bold text-white">User Accounts & Licenses</h2>
-      <a href="/admin/users/create" class="btn btn-primary fw-bold">+ Create User ID</a>
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+      <div>
+        <h2 class="fw-bold text-white mb-0">User Accounts & Licenses</h2>
+        <small class="text-secondary">Manage user access, validity, balance credits, and payment records</small>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <input type="text" id="userSearch" class="form-control form-control-sm bg-dark text-white border-secondary" placeholder="🔍 Search user, phone..." style="width:220px;" onkeyup="filterUsers()">
+        <a href="/admin/users/create" class="btn btn-primary btn-sm fw-bold px-3 py-2 text-nowrap">+ Create User ID</a>
+      </div>
     </div>
     ${msgAlert}${errAlert}
     <div class="stat">
-      <table class="table table-dark align-middle mb-0">
-        <thead><tr><th>USER ID</th><th>NAME</th><th>PAYMENT RECORD</th><th>PC LOCK</th><th>STATUS</th><th>EXPIRY DATE</th><th>REMAINING</th><th>ACTIONS</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="8" class="text-muted py-4 text-center">No client users yet. Click "+ Create User ID" to add one.</td></tr>'}</tbody>
-      </table>
+      <div class="table-responsive">
+        <table class="table table-dark table-hover align-middle mb-0">
+          <thead>
+            <tr>
+              <th>USER</th>
+              <th>BALANCE</th>
+              <th>PAYMENT</th>
+              <th>PC LOCK</th>
+              <th>STATUS</th>
+              <th>EXPIRY & REMAINING</th>
+              <th style="width:120px;">ACTIONS</th>
+            </tr>
+          </thead>
+          <tbody id="userTableBody">
+            ${rows || '<tr><td colspan="7" class="text-muted py-4 text-center">No client users yet. Click "+ Create User ID" to add one.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 </div>
+
+${modalsHtml}
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+function filterUsers() {
+  const q = document.getElementById('userSearch').value.toLowerCase().trim();
+  const rows = document.querySelectorAll('#userTableBody tr');
+  rows.forEach(tr => {
+    tr.style.display = tr.innerText.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+</script>
 </body>
 </html>`;
     sendHtml(html);
@@ -1945,6 +2118,12 @@ const server = http.createServer((req, res) => {
             <label class="text-info fw-bold fs-6 d-block mb-1">৫ (খ). পেমেন্ট নোট / মাধ্যম</label>
             <input type="text" name="payment_note" class="form-control bg-dark text-white border-secondary p-2 fw-bold" placeholder="যেমন: bKash - 22 Aug">
           </div>
+        </div>
+
+        <div class="mb-3">
+          <label class="text-success fw-bold fs-6 d-block mb-1">৫ (গ). শুরুর ক্যাশ ব্যালেন্স / ক্রেডিট (INITIAL BALANCE ৳)</label>
+          <input type="number" step="0.5" name="credits" class="form-control bg-dark text-white border-success p-2 fw-bold" value="20" placeholder="যেমন: 20 বা 50 (ডিফল্ট: 20)">
+          <div class="text-secondary small mt-1">💡 নতুন কাস্টমারের একাউন্টে কত টাকার ক্রেডিট বা ব্যালেন্স জমা রাখতে চান।</div>
         </div>
 
         <div class="mb-3">
