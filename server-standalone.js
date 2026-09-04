@@ -1440,6 +1440,9 @@ const server = http.createServer((req, res) => {
         <td>
           <div class="d-flex align-items-center gap-1">
             <button class="btn btn-sm btn-outline-info fw-bold px-2 py-1 text-nowrap" data-bs-toggle="modal" data-bs-target="#${editModalId}">✏️ Edit</button>
+            <form id="del_form_${safeId}" action="/admin/users/${encodeURIComponent(u.user_id)}/delete" method="POST" style="display:inline-block; margin:0;" onsubmit="return confirm('⚠️ নিশ্চিত তো? এই ইউজার (${u.user_id}) পার্মানেন্টলি রিমুভ / ডিলিট করতে চান?');">
+              <button type="submit" class="btn btn-sm btn-outline-danger fw-bold px-2 py-1" title="Remove User ${u.user_id}">🗑️</button>
+            </form>
             <div class="dropdown">
               <button class="btn btn-sm btn-secondary dropdown-toggle px-2 py-1" type="button" data-bs-toggle="dropdown" aria-expanded="false">
                 ⚙️
@@ -1454,7 +1457,7 @@ const server = http.createServer((req, res) => {
                 ${u.hwid ? `<li><form action="/admin/users/${encodeURIComponent(u.user_id)}/reset-pc" method="POST"><button type="submit" class="dropdown-item text-warning">🔓 Reset PC Lock</button></form></li>` : ''}
                 <li><form action="/admin/users/${encodeURIComponent(u.user_id)}/toggle-status" method="POST"><button type="submit" class="dropdown-item text-light">⏯️ Toggle Status (${u.status === 'active' ? 'Suspend' : 'Activate'})</button></form></li>
                 <li><hr class="dropdown-divider border-secondary"></li>
-                <li><form action="/admin/users/${encodeURIComponent(u.user_id)}/delete" method="POST" onsubmit="return confirm('Are you sure you want to delete user ${u.user_id}?');"><button type="submit" class="dropdown-item text-danger">🗑️ Delete User</button></form></li>
+                <li><button type="button" class="dropdown-item text-danger fw-bold" onclick="if(confirm('⚠️ নিশ্চিত তো? এই ইউজার (${u.user_id}) পার্মানেন্টলি রিমুভ / ডিলিট করতে চান?')) { document.getElementById('del_form_${safeId}').submit(); }">🗑️ Remove / Delete User</button></li>
               </ul>
             </div>
           </div>
@@ -1497,9 +1500,12 @@ const server = http.createServer((req, res) => {
                   <input type="text" name="payment_note" class="form-control bg-dark text-white border-secondary fw-bold" value="${u.payment_note || ''}" placeholder="যেমন: bKash (017...) - TrxID: ...">
                 </div>
               </div>
-              <div class="modal-footer border-secondary">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="submit" class="btn btn-primary fw-bold">💾 Save Changes</button>
+              <div class="modal-footer border-secondary d-flex justify-content-between">
+                <button type="button" class="btn btn-outline-danger fw-bold btn-sm" onclick="if(confirm('⚠️ নিশ্চিত তো? এই ইউজার (${u.user_id}) পার্মানেন্টলি রিমুভ / ডিলিট করতে চান?')) { document.getElementById('del_form_${safeId}').submit(); }">🗑️ Remove User</button>
+                <div>
+                  <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                  <button type="submit" class="btn btn-primary btn-sm fw-bold">💾 Save Changes</button>
+                </div>
               </div>
             </form>
           </div>
@@ -1654,7 +1660,7 @@ const server = http.createServer((req, res) => {
               <th>PC LOCK</th>
               <th>STATUS</th>
               <th>EXPIRY & REMAINING</th>
-              <th style="width:120px;">ACTIONS</th>
+              <th style="width:140px;">ACTIONS</th>
             </tr>
           </thead>
           <tbody id="userTableBody">
