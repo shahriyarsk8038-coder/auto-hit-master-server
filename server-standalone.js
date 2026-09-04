@@ -875,12 +875,19 @@ const server = http.createServer((req, res) => {
           return sendJson({ ok: true, plan_type: 'unlimited', days_left: Math.ceil((expDt - now) / (1000 * 60 * 60 * 24)) });
         }
 
+        // Deduplication protection: Prevent double-deductions within 3 seconds
+        const currentTime = Date.now();
+        if (user.last_scan_deduct && (currentTime - user.last_scan_deduct < 3000)) {
+          return sendJson({ ok: true, plan_type: 'credits', remaining_credits: user.credits, dedupe: true });
+        }
+
         // Credit-based plan deduction (1.5 credits = ৳1.50 per scan)
         const currentCredits = Number(user.credits) || 0;
         if (currentCredits < 1.5) {
           return sendJson({ ok: false, error: 'INSUFFICIENT_CREDITS', message: 'আপনার ব্যালেন্স শেষ! (ন্যূনতম ১.৫ ক্রেডিট / ৳১.৫০ প্রয়োজন)' });
         }
 
+        user.last_scan_deduct = currentTime;
         user.credits = Math.round((currentCredits - 1.5) * 100) / 100;
         saveDb(db);
         return sendJson({ ok: true, plan_type: 'credits', remaining_credits: user.credits, deducted: 1.5 });
