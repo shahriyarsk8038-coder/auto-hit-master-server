@@ -62,5 +62,13 @@
       "created_at": "2026-08-22T15:42:30.764Z",
       "approved_at": "2026-08-22T15:42:30.904Z"
     }
-  ]
+  ],
+  "settings": {
+    "gemini_keys_b64": [
+      "QVEuQWI4Uk42SlY0SThCUzZ4dGdMYWNhWS1GMzRlMXFRNXBvYkF3S0tZcWY5NmFHNGN1dlE=",
+      "QVEuQWI4Uk42TGY3MjJlT2VicUVpWDNwT1BoS3JUMEstUlhCMzBaTzRyT1ZYLWRFd1dzYWc=",
+      "QVEuQWI4Uk42S2xfVTZfQ0E5a2czRVpYZEY2XzdkSnFxSzFiX3dZdWkyejZULTU3VmV0VUE="
+    ],
+    "default_provider": "gemini"
+  }
 }

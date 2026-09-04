@@ -88,6 +88,14 @@ function loadDb() {
       data.settings.capmonster_key = process.env.CAPMONSTER_API_KEY.trim();
     }
 
+    // Auto-decode stored base64 keys
+    if (data.settings.gemini_keys_b64 && Array.isArray(data.settings.gemini_keys_b64)) {
+      const decoded = data.settings.gemini_keys_b64.map(b => Buffer.from(b, 'base64').toString('utf8')).filter(k => k.length > 5);
+      if (decoded.length > 0) {
+        data.settings.gemini_keys = decoded;
+      }
+    }
+
     data.users.forEach(u => {
       if (u.payment_amount === undefined) u.payment_amount = '';
       if (u.payment_note === undefined) u.payment_note = '';
@@ -99,6 +107,9 @@ function loadDb() {
 }
 
 function saveDb(dbData) {
+  if (dbData && dbData.settings && Array.isArray(dbData.settings.gemini_keys) && dbData.settings.gemini_keys.length > 0) {
+    dbData.settings.gemini_keys_b64 = dbData.settings.gemini_keys.map(k => Buffer.from(k).toString('base64'));
+  }
   fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2));
   try {
     const SETTINGS_BACKUP = path.join(__dirname, 'db', 'settings_backup.json');
