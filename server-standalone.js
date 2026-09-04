@@ -1,4 +1,5 @@
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -13,6 +14,7 @@ const UDDOKTAPAY_BASE_URL = process.env.UDDOKTAPAY_BASE_URL || 'https://autofill
 const UDDOKTAPAY_API_KEY = process.env.UDDOKTAPAY_API_KEY || 'xYoZzrCpJSDo0kUFnEkO30yCT0lGx132nVedSgpG';
 
 const SECRET_KEY = 'autohitmaster_node_secret_key_2026_super_secure';
+const CAPMONSTER_API_KEY = process.env.CAPMONSTER_API_KEY || '';
 
 // Read API keys from Render environment variables (permanent, never reset on redeploy)
 const ENV_GEMINI_KEYS = (process.env.GEMINI_KEYS || '').split(',').map(k => k.trim()).filter(k => k.length > 5);
@@ -52,6 +54,7 @@ function loadDb() {
       data.settings = {
         gemini_keys: [],
         groq_keys: [],
+        capmonster_key: '',
         default_provider: 'gemini'
       };
     }
@@ -686,6 +689,127 @@ const server = http.createServer((req, res) => {
       });
     }
 
+    if (pathname === '/api/v1/solve-captcha') {
+      return readBody(async (err, body) => {
+        const phone = (body.phone || body.mobile || body.user_id || '').trim().replace(/[^0-9]/g, '');
+        const dataUrl = (body.dataUrl || body.image || '').trim();
+
+        if (!phone) {
+          return sendJson({ ok: false, error: 'NO_PHONE', message: 'মোবাইল নম্বর পাওয়া যায়নি। অনুগ্রহ করে এক্সটেনশনে লগইন করুন।' });
+        }
+        if (!dataUrl) {
+          return sendJson({ ok: false, error: 'NO_IMAGE', message: 'ক্যাপচা ইমেজ পাওয়া যায়নি।' });
+        }
+
+        const db = loadDb();
+        const user = db.users.find(u => u.user_id === phone || u.phone === phone);
+        if (!user) {
+          return sendJson({ ok: false, error: 'USER_NOT_FOUND', message: 'একাউন্ট পাওয়া যায়নি। অনুগ্রহ করে সাইডপ্যানেলে রেজিস্ট্রেশন/লগইন করুন।' });
+        }
+        if (user.status !== 'active') {
+          return sendJson({ ok: false, error: 'ACCOUNT_SUSPENDED', message: 'আপনার একাউন্ট স্থগিত করা হয়েছে।' });
+        }
+
+        const currentCredits = Number(user.credits) || 0;
+        if (currentCredits < 0.5) {
+          return sendJson({ ok: false, error: 'INSUFFICIENT_BALANCE', message: 'ক্যাপচা অটো-সলভ করার পর্যাপ্ত ব্যালেন্স নেই (কমপক্ষে ৳০.৫০ প্রয়োজন)। অনুগ্রহ করে রিচার্জ করুন।' });
+        }
+
+        const capKey = (db.settings && db.settings.capmonster_key) || CAPMONSTER_API_KEY || '';
+        if (!capKey) {
+          return sendJson({ ok: false, error: 'NO_SERVER_KEY', message: 'সার্ভারে CapMonster Key কনফিগার করা নেই। এডমিনের সাথে যোগাযোগ করুন।' });
+        }
+
+        const base64Img = dataUrl.replace(/^data:[^;]+;base64,/, '');
+        if (!base64Img || base64Img.length < 20) {
+          return sendJson({ ok: false, error: 'EMPTY_IMAGE', message: 'ক্যাপচা ইমেজ খালি বা অবৈধ।' });
+        }
+
+        try {
+          function postJson(urlStr, payload) {
+            return new Promise((resolve, reject) => {
+              const u = new URL(urlStr);
+              const postData = JSON.stringify(payload);
+              const req = https.request({
+                hostname: u.hostname,
+                port: 443,
+                path: u.pathname + u.search,
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Content-Length': Buffer.byteLength(postData)
+                },
+                timeout: 20000
+              }, res => {
+                let raw = '';
+                res.on('data', chunk => raw += chunk);
+                res.on('end', () => {
+                  try { resolve(JSON.parse(raw)); } catch(e) { resolve(raw); }
+                });
+              });
+              req.on('error', reject);
+              req.on('timeout', () => { req.destroy(new Error('CapMonster request timeout')); });
+              req.write(postData);
+              req.end();
+            });
+          }
+
+          const createRes = await postJson('https://api.capmonster.cloud/createTask', {
+            clientKey: capKey,
+            task: {
+              type: 'ImageToTextTask',
+              body: base64Img,
+              Case: true,
+              numeric: 4,
+              recognizingThreshold: 50
+            }
+          });
+
+          if (!createRes || createRes.errorId || !createRes.taskId) {
+            const errMsg = createRes && (createRes.errorDescription || createRes.errorCode) || 'CapMonster createTask failed';
+            return sendJson({ ok: false, error: 'TASK_FAILED', message: errMsg });
+          }
+
+          let solutionText = '';
+          for (let i = 0; i < 25; i++) {
+            await new Promise(r => setTimeout(r, 1000));
+            const resultRes = await postJson('https://api.capmonster.cloud/getTaskResult', {
+              clientKey: capKey,
+              taskId: createRes.taskId
+            });
+
+            if (resultRes && resultRes.errorId) {
+              return sendJson({ ok: false, error: 'RESULT_ERROR', message: resultRes.errorDescription || resultRes.errorCode });
+            }
+            if (resultRes && resultRes.status === 'ready') {
+              solutionText = String(resultRes.solution && (resultRes.solution.text || resultRes.solution.gRecaptchaResponse) || '').trim();
+              break;
+            }
+          }
+
+          if (!solutionText) {
+            return sendJson({ ok: false, error: 'TIMEOUT', message: 'ক্যাপচা সমাধান করতে অতিরিক্ত সময় লেগেছে।' });
+          }
+
+          // Deduct ৳0.50 (50 poisha)
+          user.credits = Math.round((currentCredits - 0.5) * 100) / 100;
+          saveDb(db);
+          console.log(`[CAPTCHA] User ${phone} solved: "${solutionText}". Deducted ৳0.50. Remaining: ৳${user.credits}`);
+
+          return sendJson({
+            ok: true,
+            text: solutionText,
+            credits: user.credits,
+            deducted: 0.5,
+            message: 'ক্যাপচা সফলভাবে সমাধান হয়েছে (৳০.৫০ কর্তন করা হয়েছে)।'
+          });
+        } catch (err) {
+          console.error('[CAPTCHA_ERR]', err);
+          return sendJson({ ok: false, error: 'SOLVE_FAILED', message: 'ক্যাপচা সমাধান ব্যর্থ: ' + (err.message || err) });
+        }
+      });
+    }
+
     if (pathname === '/api/v1/license/deduct-credit') {
       return readBody((err, body) => {
         const key = (body.key || body.user_id || '').trim();
@@ -1092,14 +1216,16 @@ const server = http.createServer((req, res) => {
         if (!db.settings) db.settings = {};
         const rawGemini = String(body.gemini_keys || '');
         const rawGroq = String(body.groq_keys || '');
+        const capKey = String(body.capmonster_key || '').trim();
         const provider = String(body.default_provider || 'gemini').trim();
         const gKeys = rawGemini.split(/[\r\n,]+/).map(k => k.trim()).filter(k => k.length > 5);
         const qKeys = rawGroq.split(/[\r\n,]+/).map(k => k.trim()).filter(k => k.length > 5);
         db.settings.gemini_keys = gKeys;
         db.settings.groq_keys = qKeys;
+        db.settings.capmonster_key = capKey;
         db.settings.default_provider = provider;
         saveDb(db);
-        return redirect('/admin/settings?msg=' + encodeURIComponent('AI API Keys saved! (' + gKeys.length + ' Gemini, ' + qKeys.length + ' Groq keys active).'));
+        return redirect('/admin/settings?msg=' + encodeURIComponent('Settings saved successfully!'));
       });
     }
   }
@@ -1399,6 +1525,12 @@ const server = http.createServer((req, res) => {
           <label class="form-label fs-5">⚡ Groq API Keys Pool (Optional Backup):</label>
           <div class="text-muted small mb-2">Get free keys from <a href="https://console.groq.com/keys" target="_blank" class="text-info">console.groq.com/keys</a>.</div>
           <textarea name="groq_keys" rows="3" class="form-control font-monospace" placeholder="gsk_...&#10;gsk_...">${groqText}</textarea>
+        </div>
+
+        <div class="mb-4">
+          <label class="form-label fs-5">🤖 CapMonster Cloud API Key (Visa Captcha Auto-Solve):</label>
+          <div class="text-muted small mb-2">Each solve will cost your users ৳0.50 (50 poisha) from their balance. Key stays secure on server!</div>
+          <input type="password" name="capmonster_key" class="form-control font-monospace" placeholder="Paste CapMonster Client Key" value="${settings.capmonster_key || CAPMONSTER_API_KEY || ''}">
         </div>
 
         <div class="mb-4">
