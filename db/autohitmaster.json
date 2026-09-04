@@ -46,6 +46,22 @@
       "created_at": "2026-08-21T19:10:33.284Z",
       "payment_amount": "500",
       "payment_note": "bKash (01711223344) - TrxID: BK8899XX"
+    },
+    {
+      "id": 1788539868668,
+      "user_id": "01735622221",
+      "phone": "01735622221",
+      "name": "Customer (01735622221)",
+      "password": "",
+      "role": "user",
+      "plan": "credits",
+      "status": "active",
+      "credits": 21.4,
+      "payment_amount": "20",
+      "payment_note": "Recharge ৳20",
+      "hwid": null,
+      "expires_at": "2027-09-04 23:59:59",
+      "created_at": "2026-09-04T16:37:48.668Z"
     }
   ],
   "logs": [],

@@ -77,6 +77,26 @@ function loadDb() {
       } catch(e) {}
     }
 
+    // Check persistent users backup file
+    const USERS_BACKUP = path.join(__dirname, 'db', 'users_backup.json');
+    if (fs.existsSync(USERS_BACKUP)) {
+      try {
+        const bkpUsers = JSON.parse(fs.readFileSync(USERS_BACKUP, 'utf8'));
+        if (Array.isArray(bkpUsers)) {
+          bkpUsers.forEach(bu => {
+            const existing = data.users.find(u => u.user_id === bu.user_id || u.phone === bu.phone);
+            if (!existing) {
+              data.users.push(bu);
+            } else {
+              if ((existing.credits === undefined || existing.credits < bu.credits) && bu.credits != null) {
+                existing.credits = bu.credits;
+              }
+            }
+          });
+        }
+      } catch(e) {}
+    }
+
     // Permanent fallback from Render Environment Variables
     if ((!data.settings.gemini_keys || data.settings.gemini_keys.length === 0) && process.env.GEMINI_KEYS) {
       data.settings.gemini_keys = process.env.GEMINI_KEYS.split(/[\r\n,]+/).map(k => k.trim()).filter(k => k.length > 5);
@@ -121,6 +141,10 @@ function saveDb(dbData) {
     const SETTINGS_BACKUP = path.join(__dirname, 'db', 'settings_backup.json');
     if (dbData && dbData.settings) {
       fs.writeFileSync(SETTINGS_BACKUP, JSON.stringify(dbData.settings, null, 2));
+    }
+    const USERS_BACKUP = path.join(__dirname, 'db', 'users_backup.json');
+    if (dbData && dbData.users) {
+      fs.writeFileSync(USERS_BACKUP, JSON.stringify(dbData.users, null, 2));
     }
   } catch(e) {}
 }

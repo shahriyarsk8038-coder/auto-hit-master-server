@@ -1,0 +1,57 @@
+[
+  {
+    "id": 1787406148057,
+    "user_id": "sbbb",
+    "password_hash": "b295bf61d69c460e8111e5daafed3299d4c3e36ccae3388e77a10e1f12e13d5a",
+    "name": "",
+    "phone": "",
+    "payment_amount": "",
+    "payment_note": "",
+    "status": "active",
+    "hwid": null,
+    "expires_at": "2026-09-21 13:42:27",
+    "created_at": "2026-08-22T13:42:27.708Z"
+  },
+  {
+    "id": 1787340196898,
+    "user_id": "sv12",
+    "password_hash": "1ef74605705a537772505ac21351472964b1597bf7d9a7607fe36f46567b0387",
+    "name": "",
+    "phone": "",
+    "status": "active",
+    "hwid": "hw:va-645067f4-9c29-4278-8178-c31b102832af|id:645067f4-9c29-4278-8178-c31b102832af",
+    "expires_at": "2026-08-27 11:40:32",
+    "created_at": "2026-08-21T19:23:16.899Z",
+    "payment_amount": "400",
+    "payment_note": "20/05/2005"
+  },
+  {
+    "id": 1787339433284,
+    "user_id": "sb12",
+    "password_hash": "3e104531e3ba38e5765fb01add8fbf51bfa82de1cf4fb9b08907ff9aa7c422a6",
+    "name": "sobuz",
+    "phone": "",
+    "status": "active",
+    "hwid": null,
+    "expires_at": "2026-09-27 11:59:59",
+    "created_at": "2026-08-21T19:10:33.284Z",
+    "payment_amount": "500",
+    "payment_note": "bKash (01711223344) - TrxID: BK8899XX"
+  },
+  {
+    "id": 1788539868668,
+    "user_id": "01735622221",
+    "phone": "01735622221",
+    "name": "Customer (01735622221)",
+    "password": "",
+    "role": "user",
+    "plan": "credits",
+    "status": "active",
+    "credits": 21.4,
+    "payment_amount": "20",
+    "payment_note": "Recharge ৳20",
+    "hwid": null,
+    "expires_at": "2027-09-04 23:59:59",
+    "created_at": "2026-09-04T16:37:48.668Z"
+  }
+]
