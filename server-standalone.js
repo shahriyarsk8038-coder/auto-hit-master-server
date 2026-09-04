@@ -58,6 +58,36 @@ function loadDb() {
         default_provider: 'gemini'
       };
     }
+    // Check persistent settings backup file
+    const SETTINGS_BACKUP = path.join(__dirname, 'db', 'settings_backup.json');
+    if (fs.existsSync(SETTINGS_BACKUP)) {
+      try {
+        const bkp = JSON.parse(fs.readFileSync(SETTINGS_BACKUP, 'utf8'));
+        if (bkp) {
+          if ((!data.settings.gemini_keys || data.settings.gemini_keys.length === 0) && bkp.gemini_keys && bkp.gemini_keys.length > 0) {
+            data.settings.gemini_keys = bkp.gemini_keys;
+          }
+          if ((!data.settings.groq_keys || data.settings.groq_keys.length === 0) && bkp.groq_keys && bkp.groq_keys.length > 0) {
+            data.settings.groq_keys = bkp.groq_keys;
+          }
+          if (!data.settings.capmonster_key && bkp.capmonster_key) {
+            data.settings.capmonster_key = bkp.capmonster_key;
+          }
+        }
+      } catch(e) {}
+    }
+
+    // Permanent fallback from Render Environment Variables
+    if ((!data.settings.gemini_keys || data.settings.gemini_keys.length === 0) && process.env.GEMINI_KEYS) {
+      data.settings.gemini_keys = process.env.GEMINI_KEYS.split(/[\r\n,]+/).map(k => k.trim()).filter(k => k.length > 5);
+    }
+    if ((!data.settings.groq_keys || data.settings.groq_keys.length === 0) && process.env.GROQ_KEYS) {
+      data.settings.groq_keys = process.env.GROQ_KEYS.split(/[\r\n,]+/).map(k => k.trim()).filter(k => k.length > 5);
+    }
+    if (!data.settings.capmonster_key && process.env.CAPMONSTER_API_KEY) {
+      data.settings.capmonster_key = process.env.CAPMONSTER_API_KEY.trim();
+    }
+
     data.users.forEach(u => {
       if (u.payment_amount === undefined) u.payment_amount = '';
       if (u.payment_note === undefined) u.payment_note = '';
@@ -70,6 +100,12 @@ function loadDb() {
 
 function saveDb(dbData) {
   fs.writeFileSync(DB_FILE, JSON.stringify(dbData, null, 2));
+  try {
+    const SETTINGS_BACKUP = path.join(__dirname, 'db', 'settings_backup.json');
+    if (dbData && dbData.settings) {
+      fs.writeFileSync(SETTINGS_BACKUP, JSON.stringify(dbData.settings, null, 2));
+    }
+  } catch(e) {}
 }
 
 const SESSIONS = {};
@@ -1471,8 +1507,16 @@ const server = http.createServer((req, res) => {
     const pendingBadge = pendingReqs > 0 ? `<span class="badge bg-danger ms-1">${pendingReqs}</span>` : '';
     const settings = db.settings || {};
 
-    const geminiText = (settings.gemini_keys || []).join('\n');
-    const groqText = (settings.groq_keys || []).join('\n');
+    const allGemini = (settings.gemini_keys && settings.gemini_keys.length > 0)
+      ? settings.gemini_keys
+      : (process.env.GEMINI_KEYS ? process.env.GEMINI_KEYS.split(/[\r\n,]+/).map(k => k.trim()).filter(k => k.length > 5) : []);
+    const allGroq = (settings.groq_keys && settings.groq_keys.length > 0)
+      ? settings.groq_keys
+      : (process.env.GROQ_KEYS ? process.env.GROQ_KEYS.split(/[\r\n,]+/).map(k => k.trim()).filter(k => k.length > 5) : []);
+    const capKey = settings.capmonster_key || process.env.CAPMONSTER_API_KEY || '';
+
+    const geminiText = allGemini.join('\n');
+    const groqText = allGroq.join('\n');
     const provider = settings.default_provider || 'gemini';
 
     const msgAlert = msg ? `<div class="alert alert-success py-2 fw-bold text-dark" style="background:#dcfce7; border-color:#86efac;">${msg}</div>` : '';
@@ -1509,7 +1553,16 @@ const server = http.createServer((req, res) => {
   </div>
   <div class="p-4 flex-grow-1">
     <h2 class="fw-bold text-white mb-2">Central AI Keys & Load Balancer</h2>
-    <p class="text-muted mb-4">Add your free Google Gemini or Groq API keys below. All clients will automatically use these keys with instant round-robin load balancing!</p>
+    <p class="text-muted mb-3">Add your free Google Gemini, Groq, and CapMonster API keys below. Clients will automatically use these keys with instant round-robin load balancing!</p>
+
+    <div id="autoRestoreBanner" class="alert alert-info py-2 small fw-bold" style="display:none; background:#0284c7; color:#fff; border:none; margin-bottom:15px;">
+      ⚡ আপনার ব্রাউজার ব্যাকআপ থেকে পূর্বে সেভ করা এপিআই কীগুলো স্বয়ংক্রিয়ভাবে লোড করা হয়েছে! নিচে 'Save & Sync All Clients' বাটনে ক্লিক করে নিশ্চিত করুন।
+    </div>
+
+    <div class="alert alert-dark py-2 px-3 small border-secondary mb-3" style="background:#131d31; color:#94a3b8;">
+      💡 <strong class="text-white">সার্ভার রিস্টার্টেও কি পার্মানেন্ট রাখতে চান?</strong> Render ড্যাশবোর্ডে গিয়ে <strong>Environment</strong> ট্যাবে <code class="text-info">GEMINI_KEYS</code> ভ্যারিয়েবল হিসেবে আপনার কীগুলো দিয়ে দিলে সার্ভার যতই রিডিপ্লয় হোক না কেন কি কখনো মুছবে না।
+    </div>
+
     ${msgAlert}${errAlert}
     
     <div class="stat" style="max-width:800px;">
@@ -1518,7 +1571,7 @@ const server = http.createServer((req, res) => {
           <label class="form-label fs-5">🌟 Google Gemini API Keys Pool (One key per line):</label>
           <div class="text-muted small mb-2">Get free keys from <a href="https://aistudio.google.com/apikey" target="_blank" class="text-info">aistudio.google.com/apikey</a>. You can put 3 to 10 keys here for 100% unlimited capacity!</div>
           <textarea name="gemini_keys" rows="5" class="form-control font-monospace" placeholder="AIzaSy...&#10;AIzaSy...&#10;AIzaSy...">${geminiText}</textarea>
-          <div class="mt-1 text-info small">Active Gemini Keys in Pool: <strong>${(settings.gemini_keys || []).length} keys</strong> (Capacity: ~<strong>${(settings.gemini_keys || []).length * 1500} passports/day</strong>)</div>
+          <div class="mt-1 text-info small">Active Gemini Keys in Pool: <strong>${allGemini.length} keys</strong> (Capacity: ~<strong>${allGemini.length * 1500} passports/day</strong>)</div>
         </div>
 
         <div class="mb-4">
@@ -1530,7 +1583,7 @@ const server = http.createServer((req, res) => {
         <div class="mb-4">
           <label class="form-label fs-5">🤖 CapMonster Cloud API Key (Visa Captcha Auto-Solve):</label>
           <div class="text-muted small mb-2">Each solve will cost your users ৳0.50 (50 poisha) from their balance. Key stays secure on server!</div>
-          <input type="password" name="capmonster_key" class="form-control font-monospace" placeholder="Paste CapMonster Client Key" value="${settings.capmonster_key || CAPMONSTER_API_KEY || ''}">
+          <input type="password" name="capmonster_key" class="form-control font-monospace" placeholder="Paste CapMonster Client Key" value="${capKey}">
         </div>
 
         <div class="mb-4">
@@ -1547,6 +1600,45 @@ const server = http.createServer((req, res) => {
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+(function() {
+  const gEl = document.querySelector('textarea[name="gemini_keys"]');
+  const qEl = document.querySelector('textarea[name="groq_keys"]');
+  const cEl = document.querySelector('input[name="capmonster_key"]');
+  const banner = document.getElementById('autoRestoreBanner');
+  const form = document.querySelector('form');
+
+  if (gEl && gEl.value.trim()) localStorage.setItem('ahm_backup_gemini_keys', gEl.value.trim());
+  if (qEl && qEl.value.trim()) localStorage.setItem('ahm_backup_groq_keys', qEl.value.trim());
+  if (cEl && cEl.value.trim()) localStorage.setItem('ahm_backup_cap_key', cEl.value.trim());
+
+  let restored = false;
+  if (gEl && !gEl.value.trim() && localStorage.getItem('ahm_backup_gemini_keys')) {
+    gEl.value = localStorage.getItem('ahm_backup_gemini_keys');
+    restored = true;
+  }
+  if (qEl && !qEl.value.trim() && localStorage.getItem('ahm_backup_groq_keys')) {
+    qEl.value = localStorage.getItem('ahm_backup_groq_keys');
+    restored = true;
+  }
+  if (cEl && !cEl.value.trim() && localStorage.getItem('ahm_backup_cap_key')) {
+    cEl.value = localStorage.getItem('ahm_backup_cap_key');
+    restored = true;
+  }
+
+  if (restored && banner) {
+    banner.style.display = 'block';
+  }
+
+  if (form) {
+    form.addEventListener('submit', function() {
+      if (gEl && gEl.value.trim()) localStorage.setItem('ahm_backup_gemini_keys', gEl.value.trim());
+      if (qEl && qEl.value.trim()) localStorage.setItem('ahm_backup_groq_keys', qEl.value.trim());
+      if (cEl && cEl.value.trim()) localStorage.setItem('ahm_backup_cap_key', cEl.value.trim());
+    });
+  }
+})();
+</script>
 </body>
 </html>`;
     sendHtml(html);
