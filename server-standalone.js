@@ -50,6 +50,7 @@ function loadDb() {
     const data = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
     if (!data.users) data.users = [];
     if (!data.payment_requests) data.payment_requests = [];
+    if (!data.deposits) data.deposits = [];
     if (!data.settings) {
       data.settings = {
         gemini_keys: [],
@@ -91,6 +92,21 @@ function loadDb() {
               if ((existing.credits === undefined || existing.credits < bu.credits) && bu.credits != null) {
                 existing.credits = bu.credits;
               }
+            }
+          });
+        }
+      } catch(e) {}
+    }
+
+    // Check persistent deposits backup file
+    const DEPOSITS_BACKUP = path.join(__dirname, 'db', 'deposits_backup.json');
+    if (fs.existsSync(DEPOSITS_BACKUP)) {
+      try {
+        const bkpDeps = JSON.parse(fs.readFileSync(DEPOSITS_BACKUP, 'utf8'));
+        if (Array.isArray(bkpDeps)) {
+          bkpDeps.forEach(bd => {
+            if (!data.deposits.some(d => d.id === bd.id || (d.trx_id && d.trx_id !== '-' && d.trx_id === bd.trx_id))) {
+              data.deposits.push(bd);
             }
           });
         }
@@ -145,6 +161,10 @@ function saveDb(dbData) {
     const USERS_BACKUP = path.join(__dirname, 'db', 'users_backup.json');
     if (dbData && dbData.users) {
       fs.writeFileSync(USERS_BACKUP, JSON.stringify(dbData.users, null, 2));
+    }
+    const DEPOSITS_BACKUP = path.join(__dirname, 'db', 'deposits_backup.json');
+    if (dbData && dbData.deposits) {
+      fs.writeFileSync(DEPOSITS_BACKUP, JSON.stringify(dbData.deposits, null, 2));
     }
   } catch(e) {}
 }
@@ -286,9 +306,12 @@ const server = http.createServer((req, res) => {
       });
     }
     if (pathname === '/admin/payments') {
+      return redirect('/admin/deposits');
+    }
+    if (pathname === '/admin/deposits') {
       const admin = getSessionAdmin();
       if (!admin) return redirect('/admin/login');
-      return renderPayments(admin, reqUrl.searchParams.get('msg'), reqUrl.searchParams.get('error'));
+      return renderDeposits(admin, reqUrl.searchParams.get('date'), reqUrl.searchParams.get('msg'), reqUrl.searchParams.get('error'));
     }
     
     
@@ -335,6 +358,19 @@ const server = http.createServer((req, res) => {
                   if (u) {
                     u.credits = (u.credits || 0) + creds;
                     u.status = 'active';
+                    if (!db.deposits) db.deposits = [];
+                    db.deposits.unshift({
+                      id: 'DEP_' + Date.now(),
+                      user_id: uid,
+                      name: u.name || ('User ' + uid),
+                      amount: Number(vJson.amount || creds) || 20,
+                      credits: creds,
+                      method: 'Paymently Auto (' + (vJson.payment_method || 'bKash') + ')',
+                      trx_id: vJson.transaction_id || invoiceId,
+                      sender_mobile: vJson.sender_number || uid,
+                      created_at: new Date().toISOString(),
+                      note: 'Auto Invoice ' + invoiceId
+                    });
                     saveDb(db);
                     console.log(`[SUCCESS AUTO-VERIFY] Credited ${uid} with +${creds} credits for invoice ${invoiceId}`);
                   }
@@ -732,6 +768,20 @@ const server = http.createServer((req, res) => {
             created_at: now.toISOString(),
             approved_at: now.toISOString(),
             notes: 'Verified automatically by Paymently Webhook'
+          });
+
+          if (!db.deposits) db.deposits = [];
+          db.deposits.unshift({
+            id: 'DEP_' + Date.now(),
+            user_id: userId,
+            name: user.name,
+            amount: Number(amount) || 20,
+            credits: creditsToAdd,
+            method: 'Paymently Auto (' + (body.payment_method || 'bKash') + ')',
+            trx_id: trxId,
+            sender_mobile: senderMobile,
+            created_at: now.toISOString(),
+            note: 'Paymently Gateway'
           });
 
           saveDb(db);
@@ -1187,9 +1237,66 @@ const server = http.createServer((req, res) => {
             user.expires_at = new Date(body.custom_expiry_date + 'T23:59:59').toISOString().replace('T', ' ').substring(0, 19);
             user.status = 'active';
           }
+          if (body.payment_amount !== undefined && body.payment_amount !== '') {
+            const payNum = parseFloat(body.payment_amount);
+            if (!isNaN(payNum) && payNum > 0) {
+              if (!db.deposits) db.deposits = [];
+              db.deposits.unshift({
+                id: 'DEP_' + Date.now(),
+                user_id: user.user_id,
+                name: user.name || ('User ' + user.user_id),
+                amount: payNum,
+                credits: (body.credits !== undefined && body.credits !== '') ? parseFloat(body.credits) : payNum,
+                method: 'Admin Manual',
+                trx_id: 'ADMIN_' + Date.now(),
+                sender_mobile: user.phone || user.user_id,
+                created_at: new Date().toISOString(),
+                note: body.payment_note || 'Admin Payment Update'
+              });
+            }
+          }
           saveDb(db);
         }
         return redirect(`/admin/users?msg=Updated+record+for+${targetUserId}`);
+      });
+    }
+
+    if (pathname === '/admin/deposits/create') {
+      return readBody((err, body) => {
+        const targetUserId = (body.target_user_id || '').trim();
+        const amount = parseFloat(body.amount) || 0;
+        const credits = parseFloat(body.credits) || amount;
+        const method = (body.method || 'bKash').trim();
+        const trxId = (body.trx_id || ('MANUAL_' + Date.now())).trim();
+        const note = (body.note || 'Manual Deposit').trim();
+
+        const db = loadDb();
+        const user = db.users.find(u => u.user_id === targetUserId || u.phone === targetUserId);
+        if (!user) {
+          return redirect('/admin/deposits?error=' + encodeURIComponent(`User "${targetUserId}" not found!`));
+        }
+
+        user.credits = Math.round(((parseFloat(user.credits) || 0) + credits) * 100) / 100;
+        user.status = 'active';
+        user.payment_amount = String(amount);
+        user.payment_note = `${method} - TrxID: ${trxId}`;
+
+        if (!db.deposits) db.deposits = [];
+        db.deposits.unshift({
+          id: 'DEP_' + Date.now(),
+          user_id: user.user_id,
+          name: user.name || ('User ' + user.user_id),
+          amount: amount,
+          credits: credits,
+          method: method,
+          trx_id: trxId,
+          sender_mobile: user.phone || user.user_id,
+          created_at: new Date().toISOString(),
+          note: note
+        });
+
+        saveDb(db);
+        return redirect(`/admin/deposits?msg=Added+deposit+of+৳${amount}+for+${user.user_id}`);
       });
     }
 
@@ -1357,9 +1464,17 @@ const server = http.createServer((req, res) => {
     const total = db.users.length;
     const active = db.users.filter(u => u.status === 'active' && new Date(u.expires_at) > now).length;
     const expired = db.users.filter(u => new Date(u.expires_at) <= now).length;
-    const pendingReqs = (db.payment_requests || []).filter(r => r.status === 'pending').length;
     const totalCredits = db.users.reduce((sum, u) => sum + (Number(u.credits) || 0), 0);
-    const recent = db.users.slice(0, 8);
+    
+    // Only show accounts that have positive balance
+    const recent = db.users.filter(u => (Number(u.credits) || 0) > 0);
+    recent.sort((a, b) => (Number(b.credits) || 0) - (Number(a.credits) || 0));
+
+    // Calculate today's deposits
+    const todayStr = now.toISOString().substring(0, 10);
+    const deposits = db.deposits || [];
+    const todayDeposits = deposits.filter(d => (d.created_at || '').substring(0, 10) === todayStr);
+    const todayTotal = todayDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
 
     let recentRows = '';
     recent.forEach(u => {
@@ -1367,14 +1482,12 @@ const server = http.createServer((req, res) => {
       recentRows += `<tr>
         <td class="fw-bold text-info">${u.user_id}</td>
         <td class="text-white">${u.name || '-'}</td>
-        <td><span class="badge bg-success-subtle text-success border border-success fw-bold px-2 py-1">৳${balance}</span></td>
+        <td><span class="badge bg-success-subtle text-success border border-success fw-bold px-2 py-1 fs-6">৳${balance}</span></td>
         <td>${u.payment_amount ? `<span class="badge bg-info text-dark fw-bold">৳${u.payment_amount}</span>` : '<span class="text-secondary small">-</span>'}</td>
         <td><span class="badge bg-${u.status === 'active' ? 'success' : 'danger'} fw-semibold">${u.status}</span></td>
-        <td class="text-secondary font-monospace small">${u.expires_at.substring(0, 10)}</td>
+        <td class="text-secondary font-monospace small">${u.expires_at ? u.expires_at.substring(0, 10) : '-'}</td>
       </tr>`;
     });
-
-    const pendingBadge = pendingReqs > 0 ? `<span class="badge bg-danger ms-1">${pendingReqs}</span>` : '';
 
     const html = `<!DOCTYPE html>
 <html>
@@ -1397,7 +1510,7 @@ const server = http.createServer((req, res) => {
     </div>
     <a href="/admin/dashboard" class="d-block text-white mb-3 text-decoration-none fw-bold">📌 Dashboard</a>
     <a href="/admin/users" class="d-block text-light mb-3 text-decoration-none">👥 Users & Licenses</a>
-    <a href="/admin/payments" class="d-block text-light mb-3 text-decoration-none">📩 Payment Requests ${pendingBadge}</a>
+    <a href="/admin/deposits" class="d-block text-light mb-3 text-decoration-none">💰 Daily Deposits</a>
     <a href="/admin/settings" class="d-block text-light mb-3 text-decoration-none">⚙️ Central AI Keys</a>
     <a href="/admin/users/create" class="d-block text-light mb-3 text-decoration-none">➕ Add New User</a>
     <a href="/admin/logout" class="d-block text-danger mt-5 text-decoration-none">🚪 Logout</a>
@@ -1408,14 +1521,17 @@ const server = http.createServer((req, res) => {
       <div class="col-md-3"><div class="stat"><div class="text-info fw-bold small text-uppercase">Total Users</div><div class="fs-2 text-white fw-bold mt-1">${total}</div></div></div>
       <div class="col-md-3"><div class="stat"><div class="text-success fw-bold small text-uppercase">Active Licenses</div><div class="fs-2 text-success fw-bold mt-1">${active}</div></div></div>
       <div class="col-md-3"><div class="stat"><div class="text-info fw-bold small text-uppercase">System Balance</div><div class="fs-2 text-info fw-bold mt-1">৳${totalCredits.toFixed(1)}</div></div></div>
-      <div class="col-md-3"><div class="stat"><div class="text-warning fw-bold small text-uppercase">Pending Payments</div><div class="fs-2 text-warning fw-bold mt-1">${pendingReqs}</div></div></div>
+      <div class="col-md-3"><div class="stat"><div class="text-warning fw-bold small text-uppercase">Today's Deposits</div><div class="fs-2 text-warning fw-bold mt-1">৳${todayTotal.toFixed(1)}</div><div class="text-secondary small mt-1">${todayDeposits.length} deposit${todayDeposits.length === 1 ? '' : 's'} today</div></div></div>
     </div>
     <div class="stat">
-      <h5 class="fw-bold mb-3 text-white">Recently Added Accounts</h5>
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="fw-bold text-white mb-0">Active Balance Accounts (${recent.length})</h5>
+        <span class="badge bg-info-subtle text-info border border-info px-3 py-1">Showing only users with balance > 0</span>
+      </div>
       <div class="table-responsive">
         <table class="table table-dark table-hover align-middle mb-0">
           <thead><tr style="color:#38bdf8;"><th style="color:#38bdf8;">USER ID</th><th style="color:#38bdf8;">NAME</th><th style="color:#38bdf8;">BALANCE</th><th style="color:#38bdf8;">PAYMENT</th><th style="color:#38bdf8;">STATUS</th><th style="color:#38bdf8;">EXPIRY</th></tr></thead>
-          <tbody>${recentRows || '<tr><td colspan="6" class="text-muted py-3 text-center">No users found. Click "Add New User" to create one.</td></tr>'}</tbody>
+          <tbody>${recentRows || '<tr><td colspan="6" class="text-muted py-4 text-center">No accounts with positive balance.</td></tr>'}</tbody>
         </table>
       </div>
     </div>
@@ -1669,7 +1785,7 @@ const server = http.createServer((req, res) => {
     </div>
     <a href="/admin/dashboard" class="d-block text-light mb-3 text-decoration-none">📌 Dashboard</a>
     <a href="/admin/users" class="d-block text-white mb-3 text-decoration-none fw-bold">👥 Users & Licenses</a>
-    <a href="/admin/payments" class="d-block text-light mb-3 text-decoration-none">📩 Payment Requests ${pendingBadge}</a>
+    <a href="/admin/deposits" class="d-block text-light mb-3 text-decoration-none">💰 Daily Deposits</a>
     <a href="/admin/settings" class="d-block text-light mb-3 text-decoration-none">⚙️ Central AI Keys</a>
     <a href="/admin/users/create" class="d-block text-light mb-3 text-decoration-none">➕ Add New User</a>
     <a href="/admin/logout" class="d-block text-danger mt-5 text-decoration-none">🚪 Logout</a>
@@ -1773,7 +1889,7 @@ function filterUsers() {
     </div>
     <a href="/admin/dashboard" class="d-block text-light mb-3 text-decoration-none">📌 Dashboard</a>
     <a href="/admin/users" class="d-block text-light mb-3 text-decoration-none">👥 Users & Licenses</a>
-    <a href="/admin/payments" class="d-block text-light mb-3 text-decoration-none">📩 Payment Requests ${pendingBadge}</a>
+    <a href="/admin/deposits" class="d-block text-light mb-3 text-decoration-none">💰 Daily Deposits</a>
     <a href="/admin/settings" class="d-block text-white mb-3 text-decoration-none font-weight-bold">⚙️ Central AI Keys</a>
     <a href="/admin/users/create" class="d-block text-light mb-3 text-decoration-none">➕ Add New User</a>
     <a href="/admin/logout" class="d-block text-danger mt-5 text-decoration-none">🚪 Logout</a>
@@ -2012,46 +2128,100 @@ function filterUsers() {
     sendHtml(html);
   }
 
-  function renderPayments(admin, msg = null, error = null) {
+  function renderDeposits(admin, selectedDate = null, msg = null, error = null) {
     const db = loadDb();
-    const reqs = db.payment_requests || [];
-    const pendingReqs = reqs.filter(r => r.status === 'pending').length;
-    const pendingBadge = pendingReqs > 0 ? `<span class="badge bg-danger ms-1">${pendingReqs}</span>` : '';
+    const deposits = (db.deposits || []).slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const now = new Date();
+    const todayStr = now.toISOString().substring(0, 10);
+    
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().substring(0, 10);
 
-    let rows = '';
-    reqs.forEach(r => {
-      const isPending = r.status === 'pending';
-      const statusBadge = isPending ? '<span class="badge bg-warning text-dark fw-bold">Pending Approval</span>' : (r.status === 'approved' ? '<span class="badge bg-success fw-bold">Approved</span>' : '<span class="badge bg-danger fw-bold">Rejected</span>');
-      const timeStr = r.created_at ? new Date(r.created_at).toLocaleString() : '-';
+    const todayDeposits = deposits.filter(d => (d.created_at || '').substring(0, 10) === todayStr);
+    const todayTotal = todayDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
 
-      rows += `<tr>
-        <td class="fw-bold text-info fs-6">${r.user_id}</td>
-        <td><span class="badge bg-primary fs-6">${r.method}</span></td>
-        <td class="fw-bold text-white fs-6">${r.sender_mobile}</td>
-        <td class="fw-bold text-warning font-monospace fs-6">${r.trx_id}</td>
-        <td class="fw-bold text-success fs-6">৳${r.amount || '500'}</td>
-        <td class="fw-bold text-white">${r.requested_days || 30} Days</td>
-        <td>${statusBadge}</td>
-        <td class="small text-light">${timeStr}</td>
-        <td>
-          ${isPending ? `
-            <div class="d-flex gap-1">
-              <form action="/admin/payments/approve" method="POST" style="display:inline-block;">
-                <input type="hidden" name="request_id" value="${r.id}">
-                <input type="hidden" name="approve_days" value="${r.requested_days || 30}">
-                <div class="mb-1 small text-warning">Link to User ID:</div>
-                <input type="text" name="target_user_id" class="form-control form-control-sm bg-dark text-white border-secondary mb-1" placeholder="Enter existing User ID" style="font-size:11px;" required>
-                <button type="submit" class="btn btn-sm btn-success fw-bold w-100">✅ Approve (+${r.requested_days || 30} Days)</button>
-              </form>
-              <form action="/admin/payments/reject" method="POST" style="display:inline-block;" onsubmit="return confirm('Reject payment request ${r.trx_id}?');">
-                <input type="hidden" name="request_id" value="${r.id}">
-                <button type="submit" class="btn btn-sm btn-outline-danger fw-bold">❌ Reject</button>
-              </form>
-            </div>
-          ` : '<span class="text-muted small">Completed</span>'}
-        </td>
+    const yesterdayDeposits = deposits.filter(d => (d.created_at || '').substring(0, 10) === yesterdayStr);
+    const yesterdayTotal = yesterdayDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+
+    const allTimeTotal = deposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+
+    // Build Last 15 Days data
+    const last15Days = [];
+    let last15Total = 0;
+    let last15Count = 0;
+
+    for (let i = 0; i < 15; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dStr = d.toISOString().substring(0, 10);
+      const dayDeps = deposits.filter(dep => (dep.created_at || '').substring(0, 10) === dStr);
+      const dTotal = dayDeps.reduce((sum, dep) => sum + (Number(dep.amount) || 0), 0);
+      last15Total += dTotal;
+      last15Count += dayDeps.length;
+
+      const dayLabel = i === 0 ? 'Today' : (i === 1 ? 'Yesterday' : d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }));
+
+      last15Days.push({
+        dateStr: dStr,
+        label: `${dayLabel} (${dStr})`,
+        shortLabel: dayLabel,
+        total: dTotal,
+        count: dayDeps.length,
+        items: dayDeps
+      });
+    }
+
+    // Active date filter (default: selectedDate if passed, or todayStr)
+    const activeDate = selectedDate || todayStr;
+    const activeDayData = deposits.filter(dep => (dep.created_at || '').substring(0, 10) === activeDate);
+    const activeDayTotal = activeDayData.reduce((sum, dep) => sum + (Number(dep.amount) || 0), 0);
+    const activeDayObj = last15Days.find(x => x.dateStr === activeDate);
+    const activeDateTitle = activeDayObj ? activeDayObj.label : activeDate;
+
+    let activeRows = '';
+    activeDayData.forEach(d => {
+      const timeStr = d.created_at ? new Date(d.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-';
+      activeRows += `<tr>
+        <td class="text-secondary font-monospace">${timeStr}</td>
+        <td class="fw-bold text-info">${d.user_id}</td>
+        <td class="text-white">${d.name || '-'}</td>
+        <td class="fw-bold text-success fs-6">৳${Number(d.amount).toFixed(1)}</td>
+        <td><span class="badge bg-primary-subtle text-primary border border-primary">${d.method || 'bKash'}</span></td>
+        <td class="text-warning font-monospace small">${d.trx_id || '-'}</td>
+        <td class="text-light small">${d.note || '-'}</td>
       </tr>`;
     });
+
+    let daysGridHtml = '';
+    last15Days.forEach(day => {
+      const isSelected = day.dateStr === activeDate;
+      const borderClass = isSelected ? 'border: 2px solid #38bdf8 !important;' : 'border: 1px solid #1f2937;';
+      const bgStyle = isSelected ? 'background: #1e293b;' : 'background: #111827;';
+      daysGridHtml += `
+        <div class="col-lg-4 col-md-6 mb-3">
+          <div class="stat h-100 p-3" style="${bgStyle} ${borderClass} cursor:pointer; border-radius:12px; transition:transform 0.15s ease;" onclick="location.href='/admin/deposits?date=${day.dateStr}'">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+              <div>
+                <span class="badge ${isSelected ? 'bg-info text-dark' : 'bg-secondary'} fw-bold text-uppercase" style="font-size:11px;">${day.shortLabel}</span>
+                <div class="text-white font-monospace small mt-1">${day.dateStr}</div>
+              </div>
+              <span class="badge ${day.total > 0 ? 'bg-success' : 'bg-dark border border-secondary text-secondary'} fs-6 fw-bold px-2 py-1">
+                ৳${day.total.toFixed(1)}
+              </span>
+            </div>
+            <div class="d-flex justify-content-between align-items-center mt-3 pt-2 border-top border-secondary">
+              <small class="text-secondary">${day.count} transaction${day.count === 1 ? '' : 's'}</small>
+              <a href="/admin/deposits?date=${day.dateStr}" class="btn btn-sm btn-${isSelected ? 'info' : 'outline-info'} py-0 px-2 fw-semibold" style="font-size:12px;">
+                ${isSelected ? '✓ Selected' : 'View →'}
+              </a>
+            </div>
+          </div>
+        </div>
+      `;
+    });
+
+    const userOptions = db.users.map(u => `<option value="${u.user_id}">${u.user_id} - ${u.name || 'User'} (৳${Number(u.credits || 0).toFixed(1)})</option>`).join('');
 
     const msgAlert = msg ? `<div class="alert alert-success py-2 font-weight-bold fw-bold text-dark" style="background:#dcfce7; border-color:#86efac;">${msg}</div>` : '';
     const errAlert = error ? `<div class="alert alert-danger py-2 font-weight-bold fw-bold">${error}</div>` : '';
@@ -2060,12 +2230,12 @@ function filterUsers() {
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Payment Requests - Auto Fill Master</title>
+  <title>Daily Deposits - Auto Fill Master</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
-    body { background:#0f172a; color:#fff; font-family:'Segoe UI', sans-serif; }
-    .sidebar { background:#1e293b; min-height:100vh; width:240px; padding:20px; }
-    .stat { background:#1e293b; border:1px solid #334155; padding:20px; border-radius:10px; }
+    body { background:#0b0f19; color:#f8fafc; font-family:'Segoe UI', system-ui, -apple-system, sans-serif; }
+    .sidebar { background:#111827; min-height:100vh; width:240px; padding:24px 20px; border-right:1px solid #1f2937; }
+    .stat { background:#111827; border:1px solid #1f2937; padding:20px; border-radius:12px; }
     th { color:#38bdf8 !important; font-weight:700 !important; text-transform:uppercase; font-size:13px; }
     td { color:#ffffff !important; font-size:14px; }
   </style>
@@ -2079,21 +2249,162 @@ function filterUsers() {
     </div>
     <a href="/admin/dashboard" class="d-block text-light mb-3 text-decoration-none">📌 Dashboard</a>
     <a href="/admin/users" class="d-block text-light mb-3 text-decoration-none">👥 Users & Licenses</a>
-    <a href="/admin/payments" class="d-block text-white mb-3 text-decoration-none font-weight-bold">📩 Payment Requests ${pendingBadge}</a>
+    <a href="/admin/deposits" class="d-block text-white mb-3 text-decoration-none fw-bold">💰 Daily Deposits</a>
+    <a href="/admin/settings" class="d-block text-light mb-3 text-decoration-none">⚙️ Central AI Keys</a>
     <a href="/admin/users/create" class="d-block text-light mb-3 text-decoration-none">➕ Add New User</a>
     <a href="/admin/logout" class="d-block text-danger mt-5 text-decoration-none">🚪 Logout</a>
   </div>
   <div class="p-4 flex-grow-1">
-    <h2 class="fw-bold text-white mb-4">bKash & Nagad Payment Requests</h2>
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+      <div>
+        <h2 class="fw-bold text-white mb-0">💰 Daily Deposits & Recharge History</h2>
+        <small class="text-secondary">Track daily user deposits, bKash/Paymently recharges, and 15-day backup reports</small>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <button type="button" class="btn btn-primary btn-sm fw-bold px-3 py-2" data-bs-toggle="modal" data-bs-target="#addDepositModal">
+          ➕ Quick Add Deposit
+        </button>
+      </div>
+    </div>
+
     ${msgAlert}${errAlert}
+
+    <!-- Stat Summary Cards -->
+    <div class="row g-3 mb-4">
+      <div class="col-md-3">
+        <div class="stat">
+          <div class="text-info fw-bold small text-uppercase">Today's Deposit</div>
+          <div class="fs-2 text-white fw-bold mt-1">৳${todayTotal.toFixed(1)}</div>
+          <small class="text-secondary">${todayDeposits.length} recharge${todayDeposits.length === 1 ? '' : 's'}</small>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="stat">
+          <div class="text-warning fw-bold small text-uppercase">Yesterday</div>
+          <div class="fs-2 text-warning fw-bold mt-1">৳${yesterdayTotal.toFixed(1)}</div>
+          <small class="text-secondary">${yesterdayDeposits.length} recharge${yesterdayDeposits.length === 1 ? '' : 's'}</small>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="stat">
+          <div class="text-success fw-bold small text-uppercase">Last 15 Days Total</div>
+          <div class="fs-2 text-success fw-bold mt-1">৳${last15Total.toFixed(1)}</div>
+          <small class="text-secondary">${last15Count} total recharges</small>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="stat">
+          <div class="text-info fw-bold small text-uppercase">All-Time Total</div>
+          <div class="fs-2 text-info fw-bold mt-1">৳${allTimeTotal.toFixed(1)}</div>
+          <small class="text-secondary">${deposits.length} total recharges</small>
+        </div>
+      </div>
+    </div>
+
+    <!-- Active Selected Date Details Box -->
+    <div class="stat mb-4" style="border: 2px solid #38bdf8;">
+      <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <div>
+          <span class="badge bg-info text-dark fw-bold px-2 py-1 mb-1">SELECTED DATE DETAILS</span>
+          <h4 class="fw-bold text-white mb-0">${activeDateTitle}</h4>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          <label class="text-secondary small fw-bold mb-0">Jump to Date:</label>
+          <input type="date" value="${activeDate}" class="form-control form-control-sm bg-dark text-white border-secondary" style="width:160px;" onchange="location.href='/admin/deposits?date=' + this.value">
+          <a href="/admin/deposits?date=${todayStr}" class="btn btn-sm btn-outline-info ${activeDate === todayStr ? 'active' : ''}">Today</a>
+          <a href="/admin/deposits?date=${yesterdayStr}" class="btn btn-sm btn-outline-secondary ${activeDate === yesterdayStr ? 'active' : ''}">Yesterday</a>
+        </div>
+      </div>
+
+      <div class="d-flex align-items-center gap-3 mb-3 p-2 rounded" style="background:#1e293b;">
+        <div><small class="text-secondary">Date Total:</small> <span class="fs-5 fw-bold text-success">৳${activeDayTotal.toFixed(1)}</span></div>
+        <div class="border-start border-secondary ps-3"><small class="text-secondary">Transactions:</small> <span class="fs-6 fw-bold text-white">${activeDayData.length}</span></div>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table table-dark table-hover align-middle mb-0">
+          <thead>
+            <tr>
+              <th>TIME</th>
+              <th>USER ID</th>
+              <th>CUSTOMER NAME</th>
+              <th>AMOUNT</th>
+              <th>METHOD</th>
+              <th>TRX ID</th>
+              <th>NOTE</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${activeRows || '<tr><td colspan="7" class="text-muted py-4 text-center">No deposit transactions recorded on this date (' + activeDate + ').</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Last 15 Days History Grid -->
     <div class="stat">
-      <table class="table table-dark align-middle mb-0">
-        <thead><tr><th>USER ID</th><th>METHOD</th><th>SENDER MOBILE</th><th>TRX ID</th><th>AMOUNT</th><th>PLAN</th><th>STATUS</th><th>SUBMITTED AT</th><th>ACTION</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="9" class="text-muted py-4 text-center">No payment requests submitted yet.</td></tr>'}</tbody>
-      </table>
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="fw-bold text-white mb-0">📅 Last 15 Days Backup & History</h5>
+        <small class="text-secondary">Click on any date to inspect full transaction breakdown</small>
+      </div>
+      <div class="row g-2">
+        ${daysGridHtml}
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Modal: Quick Add Deposit -->
+<div class="modal fade" id="addDepositModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content bg-dark text-white border border-info shadow-lg">
+      <form action="/admin/deposits/create" method="POST">
+        <div class="modal-header border-secondary">
+          <h5 class="modal-title text-info fw-bold">➕ Add Manual Deposit / Recharge</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body text-start">
+          <div class="mb-3">
+            <label class="form-label text-info fw-bold small">SELECT CLIENT / USER ID *</label>
+            <select name="target_user_id" class="form-select bg-dark text-white border-secondary fw-bold" required>
+              <option value="">-- Choose User ID --</option>
+              ${userOptions}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label text-info fw-bold small">DEPOSIT AMOUNT (৳) *</label>
+            <input type="number" step="0.1" name="amount" class="form-control bg-dark text-white border-secondary fw-bold fs-5 text-success" placeholder="e.g. 50" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label text-info fw-bold small">PAYMENT METHOD</label>
+            <select name="method" class="form-select bg-dark text-white border-secondary">
+              <option value="bKash (Manual)">bKash</option>
+              <option value="Nagad (Manual)">Nagad</option>
+              <option value="Rocket (Manual)">Rocket</option>
+              <option value="Cash">Cash</option>
+              <option value="Bank">Bank Transfer</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label text-info fw-bold small">TRANSACTION ID / REFERENCE</label>
+            <input type="text" name="trx_id" class="form-control bg-dark text-white border-secondary" placeholder="e.g. BK98234XYZ">
+          </div>
+          <div class="mb-3">
+            <label class="form-label text-info fw-bold small">NOTE (OPTIONAL)</label>
+            <input type="text" name="note" class="form-control bg-dark text-white border-secondary" placeholder="e.g. Manual recharge by admin">
+          </div>
+        </div>
+        <div class="modal-footer border-secondary">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary fw-bold px-4">Confirm & Credit Deposit</button>
+        </div>
+      </form>
     </div>
   </div>
 </div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>`;
     sendHtml(html);
@@ -2102,8 +2413,6 @@ function filterUsers() {
   function renderCreateUser(admin, error = null) {
     const errDiv = error ? `<div class="alert alert-danger py-2 fw-bold">${error}</div>` : '';
     const db = loadDb();
-    const pendingReqs = (db.payment_requests || []).filter(r => r.status === 'pending').length;
-    const pendingBadge = pendingReqs > 0 ? `<span class="badge bg-danger ms-1">${pendingReqs}</span>` : '';
 
     const html = `<!DOCTYPE html>
 <html>
@@ -2122,7 +2431,7 @@ function filterUsers() {
     </div>
     <a href="/admin/dashboard" class="d-block text-light mb-3 text-decoration-none">📌 Dashboard</a>
     <a href="/admin/users" class="d-block text-light mb-3 text-decoration-none">👥 Users & Licenses</a>
-    <a href="/admin/payments" class="d-block text-light mb-3 text-decoration-none">📩 Payment Requests ${pendingBadge}</a>
+    <a href="/admin/deposits" class="d-block text-light mb-3 text-decoration-none">💰 Daily Deposits</a>
     <a href="/admin/settings" class="d-block text-light mb-3 text-decoration-none">⚙️ Central AI Keys</a>
     <a href="/admin/users/create" class="d-block text-white mb-3 text-decoration-none font-weight-bold">➕ Add New User</a>
     <a href="/admin/logout" class="d-block text-danger mt-5 text-decoration-none">🚪 Logout</a>
