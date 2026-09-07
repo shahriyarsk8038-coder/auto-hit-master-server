@@ -85,7 +85,7 @@ function loadDb() {
         const bkpUsers = JSON.parse(fs.readFileSync(USERS_BACKUP, 'utf8'));
         if (Array.isArray(bkpUsers)) {
           bkpUsers.forEach(bu => {
-            const existing = data.users.find(u => u.user_id === bu.user_id || u.phone === bu.phone);
+            const existing = data.users.find(u => u.user_id === bu.user_id || (bu.phone && u.phone && bu.phone.trim().length >= 10 && u.phone.trim() === bu.phone.trim()));
             if (!existing) {
               data.users.push(bu);
             } else {
@@ -437,11 +437,14 @@ const server = http.createServer((req, res) => {
 
     
     if (pathname === '/api/v1/wallet/balance') {
-      const userId = (reqUrl.searchParams.get('user_id') || '').trim();
+      let userId = (reqUrl.searchParams.get('user_id') || '').trim().replace(/[^0-9]/g, '');
+      if (userId.startsWith('8801') && userId.length === 13) userId = userId.substring(2);
+      if (userId.startsWith('1') && userId.length === 10) userId = '0' + userId;
+      if (!userId) userId = (reqUrl.searchParams.get('user_id') || '').trim();
       if (!userId) return sendJson({ success: false, error: 'No user ID' });
 
       const db = loadDb();
-      let user = db.users.find(u => u.user_id === userId);
+      let user = db.users.find(u => u.user_id === userId || (u.phone && u.phone === userId));
       const now = new Date();
 
       if (!user) {
@@ -450,6 +453,7 @@ const server = http.createServer((req, res) => {
         expDate.setDate(expDate.getDate() + 365);
         user = {
           user_id: userId,
+          phone: userId,
           name: 'Customer (' + userId + ')',
           role: 'user',
           plan: 'credits',
@@ -490,15 +494,18 @@ const server = http.createServer((req, res) => {
     // --- PHONE NUMBER + PASSWORD AUTH (HARDWARE-LOCKED FREE TRIAL + UNLIMITED MULTI-PC) ---
     if (pathname === '/api/v1/auth/login-or-register') {
       return readBody((err, body) => {
-        const phone = (body.phone || body.mobile || body.user_id || '').trim().replace(/[^0-9]/g, '');
+        let phone = (body.phone || body.mobile || body.user_id || '').trim().replace(/[^0-9]/g, '');
+        if (phone.startsWith('8801') && phone.length === 13) phone = phone.substring(2);
+        if (phone.startsWith('1') && phone.length === 10) phone = '0' + phone;
+
         const password = (body.password || body.pin || '1234').trim();
         const name = (body.name || 'User ' + phone).trim();
         const deviceId = (body.device_id || '').trim();
         const hwFp = (body.hw_fp || body.hw_fingerprint || body.fp || '').trim();
         const clientIp = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
 
-        if (!phone || phone.length < 10) {
-          return sendJson({ success: false, error: 'INVALID_PHONE', message: 'সঠিক মোবাইল নম্বর দিন (যেমন: 017xxxxxxxx)' });
+        if (!/^01[3-9]\d{8}$/.test(phone) || phone.length !== 11) {
+          return sendJson({ success: false, error: 'INVALID_PHONE', message: 'সঠিক ১১ ডিজিটের মোবাইল নম্বর দিন (যেমন: 017xxxxxxxx)' });
         }
         if (!password) {
           return sendJson({ success: false, error: 'INVALID_PASS', message: 'পাসওয়ার্ড বা পিন দিন।' });
@@ -509,7 +516,7 @@ const server = http.createServer((req, res) => {
           db.claimed_trial_devices = [];
         }
 
-        let user = db.users.find(u => u.user_id === phone || u.phone === phone);
+        let user = db.users.find(u => u.user_id === phone || (u.phone && u.phone === phone));
         const now = new Date();
 
         if (!user) {
@@ -646,7 +653,10 @@ const server = http.createServer((req, res) => {
 
     if (pathname === '/api/v1/payment/create-checkout') {
       return readBody(async (err, body) => {
-        const userId = (body.user_id || '').trim() || 'CUST_' + Math.random().toString(36).substring(2, 8).toUpperCase();
+        let userId = (body.user_id || '').trim().replace(/[^0-9]/g, '');
+        if (userId.startsWith('8801') && userId.length === 13) userId = userId.substring(2);
+        if (userId.startsWith('1') && userId.length === 10) userId = '0' + userId;
+        if (!userId) userId = (body.user_id || '').trim() || 'CUST_' + Math.random().toString(36).substring(2, 8).toUpperCase();
         const name = (body.name || 'Customer').trim();
         const email = (body.email || 'customer@autofillmaster.com').trim();
         const amount = String(body.amount || '100').trim();
@@ -710,8 +720,6 @@ const server = http.createServer((req, res) => {
     }
 
     // --- UDDOKTAPAY WEBHOOK (INSTANT AUTOMATIC APPROVAL) ---
-    
-    // --- UDDOKTAPAY WEBHOOK (INSTANT AUTOMATIC APPROVAL) ---
     if (pathname === '/api/v1/payment/webhook') {
       return readBody((err, body) => {
         try {
@@ -722,7 +730,11 @@ const server = http.createServer((req, res) => {
           }
 
           const metadata = body.metadata || {};
-          const userId = (metadata.user_id || body.user_id || body.phone || '01953348038').trim();
+          let userId = (metadata.user_id || body.user_id || body.phone || '').trim().replace(/[^0-9]/g, '');
+          if (userId.startsWith('8801') && userId.length === 13) userId = userId.substring(2);
+          if (userId.startsWith('1') && userId.length === 10) userId = '0' + userId;
+          if (!userId) userId = (metadata.user_id || body.user_id || body.phone || '01953348038').trim();
+
           const creditsToAdd = parseInt(metadata.credits || body.credits || (parseInt(body.amount, 10) || 20), 10);
           const daysToAdd = parseInt(metadata.days, 10) || 0;
           const amount = body.amount || body.paid_amount || '20';
@@ -730,7 +742,7 @@ const server = http.createServer((req, res) => {
           const senderMobile = body.sender_number || body.phone_number || 'Auto Gateway';
 
           const db = loadDb();
-          let user = db.users.find(u => u.user_id === userId || u.phone === userId);
+          let user = db.users.find(u => u.user_id === userId || (u.phone && u.phone === userId));
           const now = new Date();
 
           if (!user) {
@@ -939,19 +951,23 @@ const server = http.createServer((req, res) => {
 
     if (pathname === '/api/v1/license/deduct-credit') {
       return readBody((err, body) => {
-        const key = (body.key || body.user_id || '').trim();
+        let key = (body.key || body.user_id || '').trim().replace(/[^0-9]/g, '');
+        if (key.startsWith('8801') && key.length === 13) key = key.substring(2);
+        if (key.startsWith('1') && key.length === 10) key = '0' + key;
+        if (!key) key = (body.key || body.user_id || '').trim();
+
         if (!key) return sendJson({ ok: false, error: 'No user ID provided' });
 
         const db = loadDb();
-        const user = db.users.find(u => u.user_id === key);
+        const user = db.users.find(u => u.user_id === key || (u.phone && u.phone === key));
         if (!user) return sendJson({ ok: false, error: 'User not found' });
         if (user.status !== 'active') return sendJson({ ok: false, error: 'Account is suspended' });
 
         const now = new Date();
         const expDt = new Date(user.expires_at);
 
-        // If user is on an active unlimited time plan, no deduction needed
-        if (now <= expDt && user.plan !== 'credits') {
+        // If user is explicitly on an active unlimited subscription plan
+        if (user.plan === 'unlimited' && now <= expDt) {
           return sendJson({ ok: true, plan_type: 'unlimited', days_left: Math.ceil((expDt - now) / (1000 * 60 * 60 * 24)) });
         }
 
@@ -970,6 +986,7 @@ const server = http.createServer((req, res) => {
         user.last_scan_deduct = currentTime;
         user.credits = Math.round((currentCredits - 1.5) * 100) / 100;
         saveDb(db);
+        console.log(`[DEDUCTION SUCCESS] User ${user.user_id} charged ৳1.50. Remaining balance: ৳${user.credits}`);
         return sendJson({ ok: true, plan_type: 'credits', remaining_credits: user.credits, deducted: 1.5 });
       });
     }
@@ -1158,10 +1175,22 @@ const server = http.createServer((req, res) => {
 
     if (pathname === '/admin/users/create') {
       return readBody((err, body) => {
-        const userId = (body.user_id || '').trim();
+        let userId = (body.user_id || '').trim();
         const password = (body.password || '').trim();
         const name = (body.name || '').trim();
-        const phone = (body.phone || '').trim();
+        let phone = (body.phone || '').trim().replace(/[^0-9]/g, '');
+
+        if (/^\d+$/.test(userId)) {
+          let num = userId.replace(/[^0-9]/g, '');
+          if (num.startsWith('8801') && num.length === 13) num = num.substring(2);
+          if (num.startsWith('1') && num.length === 10) num = '0' + num;
+          if (!/^01[3-9]\d{8}$/.test(num) || num.length !== 11) {
+            return renderCreateUser(admin, 'মোবাইল নম্বর অবশ্যই ১১ ডিজিটের হতে হবে (যেমন: 017xxxxxxxx)।');
+          }
+          userId = num;
+          if (!phone) phone = num;
+        }
+
         const payment_amount = (body.payment_amount || '').trim();
         const payment_note = (body.payment_note || '').trim();
         const custom_date = (body.custom_expiry_date || '').trim();
@@ -1196,6 +1225,8 @@ const server = http.createServer((req, res) => {
           password_hash: hashPassword(password),
           name: name,
           phone: phone,
+          role: 'user',
+          plan: 'credits',
           credits: initialCredits,
           payment_amount: payment_amount,
           payment_note: payment_note,
