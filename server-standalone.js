@@ -14,7 +14,7 @@ const UDDOKTAPAY_BASE_URL = process.env.UDDOKTAPAY_BASE_URL || 'https://autofill
 const UDDOKTAPAY_API_KEY = process.env.UDDOKTAPAY_API_KEY || 'xYoZzrCpJSDo0kUFnEkO30yCT0lGx132nVedSgpG';
 
 const SECRET_KEY = 'autohitmaster_node_secret_key_2026_super_secure';
-const CAPMONSTER_API_KEY = process.env.CAPMONSTER_API_KEY || '';
+const CAPMONSTER_API_KEY = process.env.CAPMONSTER_API_KEY || '17b70d3f0ae1206c5b96ff9cfe5927e5';
 
 // Read API keys from Render environment variables (permanent, never reset on redeploy)
 const ENV_GEMINI_KEYS = (process.env.GEMINI_KEYS || '').split(',').map(k => k.trim()).filter(k => k.length > 5);
@@ -73,6 +73,9 @@ function loadDb() {
           }
           if (!data.settings.capmonster_key && bkp.capmonster_key) {
             data.settings.capmonster_key = bkp.capmonster_key;
+          }
+          if (!data.settings.capmonster_key && bkp.capmonster_key_b64) {
+            data.settings.capmonster_key = Buffer.from(bkp.capmonster_key_b64, 'base64').toString('utf8');
           }
         }
       } catch(e) {}
@@ -133,6 +136,9 @@ function loadDb() {
     }
     if (data.settings.capmonster_key_b64 && !data.settings.capmonster_key) {
       data.settings.capmonster_key = Buffer.from(data.settings.capmonster_key_b64, 'base64').toString('utf8');
+    }
+    if (!data.settings.capmonster_key) {
+      data.settings.capmonster_key = '17b70d3f0ae1206c5b96ff9cfe5927e5';
     }
 
     data.users.forEach(u => {
