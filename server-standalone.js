@@ -16,6 +16,12 @@ const UDDOKTAPAY_API_KEY = process.env.UDDOKTAPAY_API_KEY || 'xYoZzrCpJSDo0kUFnE
 const SECRET_KEY = 'autohitmaster_node_secret_key_2026_super_secure';
 const CAPMONSTER_API_KEY = process.env.CAPMONSTER_API_KEY || '17b70d3f0ae1206c5b96ff9cfe5927e5';
 
+// PayStation Live API Credentials
+const PAYSTATION_MERCHANT_ID = process.env.PAYSTATION_MERCHANT_ID || '6443-1789326418';
+const PAYSTATION_PASSWORD = process.env.PAYSTATION_PASSWORD || 'hgfrsw@fxfxr5';
+const PAYSTATION_BASE_URL = 'https://api.paystation.com.bd';
+
+
 // Read API keys from Render environment variables (permanent, never reset on redeploy)
 const ENV_GEMINI_KEYS = (process.env.GEMINI_KEYS || '').split(',').map(k => k.trim()).filter(k => k.length > 5);
 const ENV_GROQ_KEYS = (process.env.GROQ_KEYS || '').split(',').map(k => k.trim()).filter(k => k.length > 5);
@@ -664,45 +670,52 @@ const server = http.createServer((req, res) => {
       });
     }
 
-    if (pathname === '/api/v1/payment/create-checkout') {
+    if (pathname === '/api/v1/payment/create-checkout' || pathname === '/api/payment/create-checkout') {
       return readBody(async (err, body) => {
         let userId = (body.user_id || '').trim().replace(/[^0-9]/g, '');
         if (userId.startsWith('8801') && userId.length === 13) userId = userId.substring(2);
         if (userId.startsWith('1') && userId.length === 10) userId = '0' + userId;
         if (!userId) userId = (body.user_id || '').trim() || 'CUST_' + Math.random().toString(36).substring(2, 8).toUpperCase();
         const name = (body.name || 'Customer').trim();
-        const email = (body.email || 'customer@autofillmaster.com').trim();
-        const amount = String(body.amount || '100').trim();
-        const credits = parseInt(body.credits, 10) || 0;
-        const days = parseInt(body.days, 10) || 0;
+        const email = (body.email || (userId + '@gmail.com')).trim();
+        const amount = Number(body.amount || '20');
+        const credits = parseInt(body.credits, 10) || amount;
 
         try {
-          const payload = JSON.stringify({
-            full_name: name,
-            email: email,
-            amount: amount,
-            metadata: {
-              user_id: userId,
-              credits: credits,
-              days: days,
-              name: name
-            },
-            redirect_url: 'https://auto-fill-master-server.onrender.com/payment/success',
-            cancel_url: 'https://auto-fill-master-server.onrender.com/payment/cancel',
-            webhook_url: 'https://auto-fill-master-server.onrender.com/api/v1/payment/webhook'
+          const invoiceNumber = 'INV_' + Date.now() + '_' + Math.floor(1000 + Math.random() * 9000);
+          
+          // Save pending invoice details in DB
+          const db = loadDb();
+          if (!db.pending_invoices) db.pending_invoices = {};
+          db.pending_invoices[invoiceNumber] = {
+            userId,
+            name,
+            amount,
+            credits,
+            created_at: new Date().toISOString()
+          };
+          saveDb(db);
+
+          const payload = querystring.stringify({
+            merchantId: PAYSTATION_MERCHANT_ID,
+            password: PAYSTATION_PASSWORD,
+            invoice_number: invoiceNumber,
+            currency: 'BDT',
+            payment_amount: amount,
+            pay_with_charge: 0,
+            reference: userId,
+            cust_name: name || ('Customer ' + userId),
+            cust_phone: userId,
+            cust_email: email,
+            callback_url: 'https://auto-fill-master-server.onrender.com/payment/paystation-callback'
           });
 
-          const urlObj = new URL(UDDOKTAPAY_BASE_URL + '/checkout-v2');
-          const https = require('https');
-          const apiReq = https.request({
-            hostname: urlObj.hostname,
-            path: urlObj.pathname,
+          const apiReq = https.request('https://api.paystation.com.bd/initiate-payment', {
             method: 'POST',
             headers: {
-              'Content-Type': 'application/json',
-              'RT-UDDOKTAPAY-API-KEY': UDDOKTAPAY_API_KEY,
-              'Accept': 'application/json',
-              'Content-Length': Buffer.byteLength(payload)
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Content-Length': Buffer.byteLength(payload),
+              'Accept': 'application/json'
             }
           }, (apiRes) => {
             let resData = '';
@@ -710,29 +723,207 @@ const server = http.createServer((req, res) => {
             apiRes.on('end', () => {
               try {
                 const json = JSON.parse(resData);
-                if (json && json.status && json.payment_url) {
-                  return sendJson({ success: true, payment_url: json.payment_url, user_id: userId });
+                console.log('[PAYSTATION INITIATE RESPONSE]:', json);
+                if (json && json.status_code === '200' && json.payment_url) {
+                  return sendJson({
+                    success: true,
+                    payment_url: json.payment_url,
+                    invoice_number: invoiceNumber,
+                    user_id: userId
+                  });
                 }
-                return sendJson({ success: false, error: json.message || 'Payment initiation failed' });
+                return sendJson({ success: false, error: json.message || 'PayStation payment initiation failed' });
               } catch (parseErr) {
-                return sendJson({ success: false, error: 'Invalid response from gateway' });
+                return sendJson({ success: false, error: 'Invalid response from PayStation gateway' });
               }
             });
           });
 
           apiReq.on('error', (e) => {
+            console.error('[PAYSTATION API ERROR]:', e);
             return sendJson({ success: false, error: 'Payment gateway connection error' });
           });
 
           apiReq.write(payload);
           apiReq.end();
         } catch (e) {
+          console.error('[CHECKOUT ERROR]:', e);
           return sendJson({ success: false, error: 'Internal checkout error' });
         }
       });
     }
 
-    // --- UDDOKTAPAY WEBHOOK (INSTANT AUTOMATIC APPROVAL) ---
+    // --- PAYSTATION CALLBACK / IPN HANDLER (INSTANT VERIFICATION & AUTO CREDIT) ---
+    if (pathname === '/payment/paystation-callback' || pathname === '/api/payment/paystation/callback' || pathname === '/payment/success') {
+      const handleCallback = async (cbBody) => {
+        try {
+          const queryParams = reqUrl.searchParams;
+          const invoiceNumber = (queryParams.get('invoice_number') || queryParams.get('invoice') || cbBody.invoice_number || cbBody.invoice_id || '').trim();
+          const queryStatus = (queryParams.get('status') || cbBody.status || '').toLowerCase();
+
+          console.log(`[PAYSTATION CALLBACK RECEIVED] Invoice: ${invoiceNumber} | Status: ${queryStatus}`);
+
+          if (!invoiceNumber) {
+            return sendHtml(`
+              <!DOCTYPE html><html><head><meta charset="utf-8"><title>Payment Notice</title>
+              <style>body{background:#0b0f19;color:#fff;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}
+              .c{background:#1e293b;border:1px solid #475569;border-radius:12px;padding:30px;text-align:center;max-width:400px;}</style></head>
+              <body><div class="c"><h2>পেমেন্ট সম্পন্ন হয়েছে</h2><p style="color:#94a3b8;">অনুগ্রহ করে এক্সটেনশনে ফিরে গিয়ে রিফ্রেশ করুন।</p>
+              <button onclick="window.close();" style="background:#2563eb;color:#fff;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:bold;">উইন্ডো বন্ধ করুন</button></div></body></html>
+            `);
+          }
+
+          // Verify transaction status directly with PayStation server-to-server
+          const verifyPayload = querystring.stringify({
+            invoice_number: invoiceNumber
+          });
+
+          const verifyRes = await new Promise((resolve) => {
+            const vReq = https.request('https://api.paystation.com.bd/transaction-status', {
+              method: 'POST',
+              headers: {
+                'merchantId': PAYSTATION_MERCHANT_ID,
+                'password': PAYSTATION_PASSWORD,
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Content-Length': Buffer.byteLength(verifyPayload),
+                'Accept': 'application/json'
+              }
+            }, (vRes) => {
+              let vData = '';
+              vRes.on('data', ch => vData += ch);
+              vRes.on('end', () => {
+                try { resolve(JSON.parse(vData)); } catch(e) { resolve(null); }
+              });
+            });
+            vReq.on('error', () => resolve(null));
+            vReq.write(verifyPayload);
+            vReq.end();
+          });
+
+          console.log('[PAYSTATION VERIFY RESPONSE]:', verifyRes);
+
+          const db = loadDb();
+          if (!Array.isArray(db.processed_invoices)) db.processed_invoices = [];
+
+          const vData = verifyRes && verifyRes.data ? verifyRes.data : {};
+          const trxStatus = String(vData.trx_status || queryStatus || '').toLowerCase();
+          const isSuccess = trxStatus === 'success' || trxStatus === 'successful' || trxStatus === 'completed';
+
+          if (isSuccess) {
+            // Prevent duplicate crediting
+            if (!db.processed_invoices.includes(invoiceNumber)) {
+              db.processed_invoices.push(invoiceNumber);
+
+              // Find user from reference or pending_invoices
+              const pending = (db.pending_invoices && db.pending_invoices[invoiceNumber]) ? db.pending_invoices[invoiceNumber] : null;
+              let targetUserId = (vData.reference || (pending ? pending.userId : null) || vData.payer_mobile_no || '').trim().replace(/[^0-9]/g, '');
+              if (targetUserId.startsWith('8801') && targetUserId.length === 13) targetUserId = targetUserId.substring(2);
+              if (targetUserId.startsWith('1') && targetUserId.length === 10) targetUserId = '0' + targetUserId;
+
+              const paidAmount = Number(vData.payment_amount || (pending ? pending.amount : 20)) || 20;
+              const creditsToAdd = (pending && pending.credits) ? Number(pending.credits) : paidAmount;
+              const trxId = vData.trx_id || invoiceNumber;
+              const senderMobile = vData.payer_mobile_no || targetUserId || '-';
+              const paymentMethod = vData.payment_method || 'bKash/Nagad';
+
+              let user = db.users.find(u => u.user_id === targetUserId || (u.phone && u.phone === targetUserId));
+              const now = new Date();
+
+              if (!user) {
+                const expDate = new Date();
+                expDate.setDate(expDate.getDate() + 365);
+                user = {
+                  user_id: targetUserId,
+                  phone: targetUserId,
+                  name: pending ? pending.name : ('Customer ' + targetUserId),
+                  role: 'user',
+                  plan: 'credits',
+                  status: 'active',
+                  credits: creditsToAdd,
+                  created_at: now.toISOString(),
+                  expires_at: expDate.toISOString(),
+                  hwid: null,
+                  notes: 'Auto-created via PayStation Gateway'
+                };
+                db.users.push(user);
+              } else {
+                user.status = 'active';
+                user.credits = (Number(user.credits) || 0) + creditsToAdd;
+              }
+
+              if (!db.deposits) db.deposits = [];
+              db.deposits.unshift({
+                id: 'DEP_' + Date.now(),
+                user_id: targetUserId,
+                name: user.name || ('Customer ' + targetUserId),
+                amount: paidAmount,
+                credits: creditsToAdd,
+                method: 'PayStation (' + paymentMethod + ')',
+                trx_id: trxId,
+                sender_mobile: senderMobile,
+                created_at: now.toISOString(),
+                note: 'PayStation Auto Invoice ' + invoiceNumber
+              });
+
+              saveDb(db);
+              console.log(`[PAYSTATION SUCCESS] User ${targetUserId} credited +${creditsToAdd}. Total now: ${user.credits} | Trx: ${trxId}`);
+            }
+
+            const pending = (db.pending_invoices && db.pending_invoices[invoiceNumber]) ? db.pending_invoices[invoiceNumber] : {};
+            const displayAmt = vData.payment_amount || pending.amount || '20';
+            const displayUser = vData.reference || pending.userId || '';
+            const displayTrx = vData.trx_id || invoiceNumber;
+
+            return sendHtml(`
+              <!DOCTYPE html><html><head><meta charset="utf-8">
+              <title>Payment Successful - Indian Visa Auto Fill Master</title>
+              <style>
+                body { background:#0b0f19; color:#fff; font-family:-apple-system,system-ui,sans-serif; display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; }
+                .card { background:#111827; border:1px solid #10b981; border-radius:16px; padding:35px 30px; text-align:center; max-width:440px; width:90%; box-shadow:0 20px 50px rgba(0,0,0,0.6); }
+                .amt-pill { background:rgba(16,185,129,0.15); color:#34d399; font-size:26px; font-weight:bold; padding:10px 24px; border-radius:30px; display:inline-block; margin:16px 0; border:1px solid #059669; }
+                .btn-close-win { background:#2563eb; color:#fff; border:none; padding:12px 28px; border-radius:8px; font-weight:bold; cursor:pointer; font-size:15px; margin-top:20px; transition:0.2s; }
+                .btn-close-win:hover { background:#1d4ed8; }
+              </style></head>
+              <body>
+                <div class="card">
+                  <div style="font-size:64px;">🎉</div>
+                  <h2 style="color:#10b981; margin:10px 0 6px 0; font-size:24px;">পেমেন্ট সফল হয়েছে!</h2>
+                  <div class="amt-pill">৳${displayAmt} ব্যালেন্স যোগ হয়েছে</div>
+                  <p style="color:#94a3b8; font-size:14px; line-height:1.6; margin:0 0 16px 0;">
+                    আপনার একাউন্টে (${displayUser ? '<b style="color:#38bdf8;">' + displayUser + '</b>' : 'একাউন্টে'}) রিচার্জ সফলভাবে জমা হয়ে গেছে।
+                  </p>
+                  <div style="background:#1e293b; border-radius:8px; padding:10px; font-size:13px; color:#cbd5e1; font-family:monospace;">
+                    TrxID: <span style="color:#fbbf24;">${displayTrx}</span>
+                  </div>
+                  <button onclick="window.close();" class="btn-close-win">উইন্ডো বন্ধ করুন</button>
+                  <p style="color:#64748b; font-size:11px; margin-top:14px;">এখন এক্সটেনশনে ফিরে গিয়ে ব্যালেন্স দেখুন।</p>
+                </div>
+              </body></html>
+            `);
+          } else {
+            return sendHtml(`
+              <!DOCTYPE html><html><head><meta charset="utf-8"><title>Payment Failed / Cancelled</title>
+              <style>body{background:#0b0f19;color:#fff;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}
+              .c{background:#1e293b;border:1px solid #ef4444;border-radius:12px;padding:30px;text-align:center;max-width:400px;}</style></head>
+              <body><div class="c"><div style="font-size:48px;">⚠️</div>
+              <h2 style="color:#ef4444;margin:10px 0;">পেমেন্ট সম্পন্ন হয়নি</h2>
+              <p style="color:#94a3b8;font-size:14px;">পেমেন্ট বাতিল হয়েছে অথবা সম্পন্ন করা সম্ভব হয়নি। কোনো টাকা কাটা হয়নি।</p>
+              <button onclick="window.close();" style="background:#475569;color:#fff;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:bold;">উইন্ডো বন্ধ করুন</button></div></body></html>
+            `);
+          }
+        } catch(cbErr) {
+          console.error('[PAYSTATION CALLBACK ERROR]:', cbErr);
+          return sendHtml('<html><body><h3>Processing payment... Please check extension balance.</h3></body></html>');
+        }
+      };
+
+      if (req.method === 'POST') {
+        return readBody((err, body) => handleCallback(body || {}));
+      } else {
+        return handleCallback({});
+      }
+    }
+// --- UDDOKTAPAY WEBHOOK (INSTANT AUTOMATIC APPROVAL) ---
     if (pathname === '/api/v1/payment/webhook') {
       return readBody((err, body) => {
         try {
