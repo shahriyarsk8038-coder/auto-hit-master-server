@@ -28,6 +28,13 @@ function hashPassword(password) {
   return crypto.createHmac('sha256', SECRET_KEY).update(password).digest('hex');
 }
 
+
+function getDhakaDateStr(dateInput) {
+  const d = dateInput ? new Date(dateInput) : new Date();
+  if (isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Dhaka' }).format(d);
+}
+
 function loadDb() {
   if (!fs.existsSync(DB_FILE)) {
     const initial = {
@@ -1507,11 +1514,12 @@ const server = http.createServer((req, res) => {
     const recent = db.users.filter(u => (Number(u.credits) || 0) > 0);
     recent.sort((a, b) => (Number(b.credits) || 0) - (Number(a.credits) || 0));
 
-    // Calculate today's deposits
-    const todayStr = now.toISOString().substring(0, 10);
+    // Calculate today's deposits using Dhaka timezone (Asia/Dhaka)
+    const todayStr = getDhakaDateStr(now);
     const deposits = db.deposits || [];
-    const todayDeposits = deposits.filter(d => (d.created_at || '').substring(0, 10) === todayStr);
+    const todayDeposits = deposits.filter(d => getDhakaDateStr(d.created_at) === todayStr);
     const todayTotal = todayDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+    const allDepositsTotal = deposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
 
     let recentRows = '';
     recent.forEach(u => {
@@ -2169,16 +2177,15 @@ function filterUsers() {
     const db = loadDb();
     const deposits = (db.deposits || []).slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     const now = new Date();
-    const todayStr = now.toISOString().substring(0, 10);
+    const todayStr = getDhakaDateStr(now);
     
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().substring(0, 10);
+    const yesterdayDate = new Date(Date.now() - 24 * 3600 * 1000);
+    const yesterdayStr = getDhakaDateStr(yesterdayDate);
 
-    const todayDeposits = deposits.filter(d => (d.created_at || '').substring(0, 10) === todayStr);
+    const todayDeposits = deposits.filter(d => getDhakaDateStr(d.created_at) === todayStr);
     const todayTotal = todayDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
 
-    const yesterdayDeposits = deposits.filter(d => (d.created_at || '').substring(0, 10) === yesterdayStr);
+    const yesterdayDeposits = deposits.filter(d => getDhakaDateStr(d.created_at) === yesterdayStr);
     const yesterdayTotal = yesterdayDeposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
 
     const allTimeTotal = deposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
@@ -2189,10 +2196,9 @@ function filterUsers() {
     let last15Count = 0;
 
     for (let i = 0; i < 15; i++) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const dStr = d.toISOString().substring(0, 10);
-      const dayDeps = deposits.filter(dep => (dep.created_at || '').substring(0, 10) === dStr);
+      const d = new Date(Date.now() - i * 24 * 3600 * 1000);
+      const dStr = getDhakaDateStr(d);
+      const dayDeps = deposits.filter(dep => getDhakaDateStr(dep.created_at) === dStr);
       const dTotal = dayDeps.reduce((sum, dep) => sum + (Number(dep.amount) || 0), 0);
       last15Total += dTotal;
       last15Count += dayDeps.length;
@@ -2211,10 +2217,26 @@ function filterUsers() {
 
     // Active date filter (default: selectedDate if passed, or todayStr)
     const activeDate = selectedDate || todayStr;
-    const activeDayData = deposits.filter(dep => (dep.created_at || '').substring(0, 10) === activeDate);
+    const activeDayData = deposits.filter(dep => getDhakaDateStr(dep.created_at) === activeDate);
     const activeDayTotal = activeDayData.reduce((sum, dep) => sum + (Number(dep.amount) || 0), 0);
     const activeDayObj = last15Days.find(x => x.dateStr === activeDate);
     const activeDateTitle = activeDayObj ? activeDayObj.label : activeDate;
+
+        let allRows = '';
+    deposits.forEach(d => {
+      const dt = d.created_at ? new Date(d.created_at) : null;
+      const dateFormatted = dt ? getDhakaDateStr(dt) : '-';
+      const timeStr = dt ? dt.toLocaleTimeString('en-US', { timeZone: 'Asia/Dhaka', hour: '2-digit', minute: '2-digit', hour12: true }) : '-';
+      allRows += `<tr>
+        <td class="text-secondary font-monospace">${dateFormatted} ${timeStr}</td>
+        <td class="fw-bold text-info">${d.user_id}</td>
+        <td class="text-white">${d.name || '-'}</td>
+        <td class="fw-bold text-success fs-6">৳${Number(d.amount).toFixed(1)}</td>
+        <td><span class="badge bg-primary-subtle text-primary border border-primary">${d.method || 'bKash'}</span></td>
+        <td class="text-warning font-monospace small">${d.trx_id || '-'}</td>
+        <td class="text-light small">${d.note || '-'}</td>
+      </tr>`;
+    });
 
     let activeRows = '';
     activeDayData.forEach(d => {
@@ -2373,6 +2395,32 @@ function filterUsers() {
           </thead>
           <tbody>
             ${activeRows || '<tr><td colspan="7" class="text-muted py-4 text-center">No deposit transactions recorded on this date (' + activeDate + ').</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- All Lifetime Deposits Card -->
+    <div class="stat mb-4">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="fw-bold text-white mb-0">📜 All Recorded Deposits (${deposits.length} total)</h5>
+        <span class="badge bg-success fs-6">Lifetime Total: ৳${allTimeTotal.toFixed(1)}</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-dark table-hover align-middle mb-0">
+          <thead class="table-secondary text-dark small">
+            <tr>
+              <th>DATE & TIME (BD)</th>
+              <th>USER ID</th>
+              <th>CUSTOMER NAME</th>
+              <th>AMOUNT</th>
+              <th>METHOD</th>
+              <th>TRX ID</th>
+              <th>NOTE</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${allRows || '<tr><td colspan="7" class="text-muted py-4 text-center">No deposit transactions found.</td></tr>'}
           </tbody>
         </table>
       </div>
