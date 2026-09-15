@@ -258,6 +258,15 @@ const server = http.createServer((req, res) => {
     }
   }
 
+  if (pathname === '/company-logo.jpg' || pathname === '/company-logo.png' || pathname === '/logo.jpg') {
+    const cLogoPath = path.join(PUBLIC_DIR, 'company-logo.jpg');
+    if (fs.existsSync(cLogoPath)) {
+      res.writeHead(200, { 'Content-Type': 'image/jpeg' });
+      if (req.method === 'HEAD') return res.end();
+      return fs.createReadStream(cLogoPath).pipe(res);
+    }
+  }
+
   
   // --- PAYSTATION CALLBACK / IPN HANDLER (SUPPORTING BOTH GET AND POST) ---
   if (pathname === '/payment/paystation-callback' || pathname === '/api/payment/paystation/callback' || pathname === '/payment/success') {
