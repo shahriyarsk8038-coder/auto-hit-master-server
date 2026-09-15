@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const path = require('path');
 const cors = require('cors');
 const session = require('express-session');
@@ -28,6 +28,10 @@ const adminRouter = require('./routes/admin');
 
 app.use('/api/v1', apiRouter);
 app.use('/admin', adminRouter);
+
+app.get('/privacy', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'privacy.html'));
+});
 
 app.get('/', (req, res) => {
   res.redirect('/admin/login');
