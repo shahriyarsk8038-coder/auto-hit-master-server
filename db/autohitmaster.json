@@ -56,7 +56,7 @@
       "role": "user",
       "plan": "credits",
       "status": "active",
-      "credits": 30,
+      "credits": 50,
       "payment_amount": "20",
       "payment_note": "Recharge ৳20",
       "hwid": null,
@@ -266,6 +266,18 @@
   },
   "deposits": [
     {
+      "id": "DEP_1789502666983",
+      "user_id": "01735622221",
+      "name": "Customer (01735622221)",
+      "amount": 20,
+      "credits": 20,
+      "method": "PayStation (bKash)",
+      "trx_id": "DIG3JDPX4J",
+      "sender_mobile": "01953348038",
+      "created_at": "2026-09-16T02:01:52.000Z",
+      "note": "PayStation Auto Invoice INV_1789502463563_5518"
+    },
+    {
       "id": "DEP_1788720000001",
       "user_id": "01859548058",
       "name": "User 01859548058",
@@ -337,5 +349,8 @@
       "created_at": "2026-08-22T15:42:30.764Z",
       "note": "bKash TrxID BK8899XX"
     }
+  ],
+  "processed_invoices": [
+    "INV_1789502463563_5518"
   ]
 }
