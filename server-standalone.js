@@ -874,7 +874,7 @@ const server = http.createServer((req, res) => {
             invoice_number: invoiceNumber,
             currency: 'BDT',
             payment_amount: amount,
-            pay_with_charge: 0,
+            pay_with_charge: 1,
             reference: userId,
             cust_name: name || ('Customer ' + userId),
             cust_phone: userId,
