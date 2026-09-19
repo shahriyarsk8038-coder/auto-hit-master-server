@@ -240,22 +240,6 @@
       "created_at": "2026-09-06T19:08:49.468Z"
     },
     {
-      "id": 1789844000000,
-      "user_id": "01700000000",
-      "phone": "01700000000",
-      "name": "Dev Tester (1000 TK)",
-      "password": "",
-      "role": "user",
-      "plan": "credits",
-      "status": "active",
-      "credits": 1000,
-      "payment_amount": "1000",
-      "payment_note": "Test Account ৳1000",
-      "hwid": null,
-      "expires_at": "2027-09-20 23:59:59",
-      "created_at": "2026-09-20T00:44:00.000Z"
-    },
-    {
       "id": 1789847778209,
       "user_id": "01912380494",
       "phone": "01912380494",
