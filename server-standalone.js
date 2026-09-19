@@ -1457,6 +1457,47 @@ const server = http.createServer((req, res) => {
       });
     }
 
+    if (pathname === '/admin/users/add-balance') {
+      return readBody((err, body) => {
+        const targetUserId = (body.target_user_id || '').trim();
+        const amount = parseFloat(body.amount) || 0;
+        const note = (body.note || 'Manual Deposit by Admin').trim();
+        const redirectUrl = body.redirect_to || '/admin/users';
+
+        if (amount <= 0) {
+          return redirect(`${redirectUrl}?error=` + encodeURIComponent('দয়া করে সঠিক টাকার পরিমাণ লিখুন!'));
+        }
+
+        const db = loadDb();
+        const user = db.users.find(u => u.user_id === targetUserId || u.phone === targetUserId);
+        if (!user) {
+          return redirect(`${redirectUrl}?error=` + encodeURIComponent(`ইউজার "${targetUserId}" খুঁজে পাওয়া যায়নি!`));
+        }
+
+        user.credits = Math.round(((parseFloat(user.credits) || 0) + amount) * 100) / 100;
+        user.status = 'active';
+        user.payment_amount = String(amount);
+        user.payment_note = note;
+
+        if (!db.deposits) db.deposits = [];
+        db.deposits.unshift({
+          id: 'DEP_' + Date.now(),
+          user_id: user.user_id,
+          name: user.name || ('User ' + user.user_id),
+          amount: amount,
+          credits: amount,
+          method: 'Admin Manual',
+          trx_id: 'MANUAL_' + Date.now(),
+          sender_mobile: user.phone || user.user_id,
+          created_at: new Date().toISOString(),
+          note: note
+        });
+
+        saveDb(db);
+        return redirect(`${redirectUrl}?msg=` + encodeURIComponent(`সফলভাবে ৳${amount} টাকা যোগ করা হয়েছে! নতুন ব্যালেন্স: ৳${user.credits} (${user.user_id})`));
+      });
+    }
+
     if (pathname === '/admin/users/update-user-payment') {
       return readBody((err, body) => {
         const targetUserId = (body.target_user_id || '').trim();
@@ -1713,8 +1754,8 @@ const server = http.createServer((req, res) => {
     const expired = db.users.filter(u => new Date(u.expires_at) <= now).length;
     const totalCredits = db.users.reduce((sum, u) => sum + (Number(u.credits) || 0), 0);
     
-    // Show all user accounts sorted by balance
-    const recent = [...db.users];
+    // Show user accounts with minimum 3 Tk balance (or admin/sub)
+    const recent = db.users.filter(u => (Number(u.credits) || 0) >= 3 || u.role === 'admin' || u.role === 'sub');
     recent.sort((a, b) => (Number(b.credits) || 0) - (Number(a.credits) || 0));
 
     // Calculate today's deposits using Dhaka timezone (Asia/Dhaka)
@@ -1725,16 +1766,61 @@ const server = http.createServer((req, res) => {
     const allDepositsTotal = deposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
 
     let recentRows = '';
+    let dashModals = '';
     recent.forEach(u => {
       const balance = u.credits != null ? Number(u.credits).toFixed(1) : '0';
+      const safeId = String(u.user_id).replace(/[^a-zA-Z0-9]/g, '_');
+      const dashModalId = 'dashAddModal_' + safeId;
       recentRows += `<tr>
         <td class="fw-bold text-info">${u.user_id}</td>
         <td class="text-white">${u.name || '-'}</td>
-        <td><span class="badge bg-success-subtle text-success border border-success fw-bold px-2 py-1 fs-6">৳${balance}</span></td>
+        <td>
+          <div class="d-flex align-items-center gap-2">
+            <span class="badge bg-success-subtle text-success border border-success fw-bold px-2 py-1 fs-6">৳${balance}</span>
+            <button type="button" class="btn btn-sm btn-success fw-bold px-2 py-0 text-nowrap" data-bs-toggle="modal" data-bs-target="#${dashModalId}" title="টাকা যোগ করুন">➕ ৳ Add</button>
+          </div>
+        </td>
         <td>${u.payment_amount ? `<span class="badge bg-info text-dark fw-bold">৳${u.payment_amount}</span>` : '<span class="text-secondary small">-</span>'}</td>
         <td><span class="badge bg-${u.status === 'active' ? 'success' : 'danger'} fw-semibold">${u.status}</span></td>
         <td class="text-secondary font-monospace small">${u.expires_at ? u.expires_at.substring(0, 10) : '-'}</td>
       </tr>`;
+
+      dashModals += `
+      <div class="modal fade" id="${dashModalId}" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content bg-dark text-white border border-success shadow-lg">
+            <div class="modal-header border-secondary">
+              <h5 class="modal-title text-success fw-bold">➕ Add Balance: ${u.user_id}</h5>
+              <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form action="/admin/users/add-balance" method="POST">
+              <input type="hidden" name="target_user_id" value="${u.user_id}">
+              <input type="hidden" name="redirect_to" value="/admin/dashboard">
+              <div class="modal-body text-start">
+                <div class="p-3 mb-3 rounded bg-secondary bg-opacity-25 border border-secondary">
+                  <div class="text-secondary small">কাস্টমার / ইউজার:</div>
+                  <div class="fs-5 fw-bold text-white">${u.user_id} ${u.name ? `(${u.name})` : ''}</div>
+                  <div class="mt-2 text-secondary small">বর্তমান ব্যালেন্স:</div>
+                  <div class="fs-4 fw-bold text-success">৳${balance}</div>
+                </div>
+                <div class="mb-3">
+                  <label class="text-success fw-bold small d-block mb-1">কত টাকা যোগ করতে চান? (ADD AMOUNT ৳)</label>
+                  <input type="number" step="1" min="1" name="amount" class="form-control form-control-lg bg-dark text-white border-success fw-bold" placeholder="যেমন: 20, 50, 100" required autofocus>
+                  <div class="text-secondary small mt-1">এই টাকা ইউজারের বর্তমান ব্যালেন্সের সাথে সরাসরি যোগ হবে।</div>
+                </div>
+                <div class="mb-3">
+                  <label class="text-info fw-bold small d-block mb-1">পেমেন্ট নোট / মাধ্যম (ঐচ্ছিক)</label>
+                  <input type="text" name="note" class="form-control bg-dark text-white border-secondary" placeholder="যেমন: ম্যানুয়াল রিচার্জ / bKash / ক্যাশ">
+                </div>
+              </div>
+              <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">বাতিল</button>
+                <button type="submit" class="btn btn-success fw-bold px-4">➕ টাকা যোগ করুন</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>`;
     });
 
     const html = `<!DOCTYPE html>
@@ -1773,18 +1859,20 @@ const server = http.createServer((req, res) => {
     </div>
     <div class="stat">
       <div class="d-flex justify-content-between align-items-center mb-3">
-        <h5 class="fw-bold text-white mb-0">All User Accounts (${recent.length})</h5>
-        <span class="badge bg-info-subtle text-info border border-info px-3 py-1">All registered users</span>
+        <h5 class="fw-bold text-white mb-0">Active Balance Users (≥ ৳3) (${recent.length})</h5>
+        <span class="badge bg-success-subtle text-success border border-success px-3 py-1">মিনিমাম ৩ টাকা ব্যালেন্স ওয়ালা অ্যাকাউন্ট</span>
       </div>
       <div class="table-responsive">
         <table class="table table-dark table-hover align-middle mb-0">
           <thead><tr style="color:#38bdf8;"><th style="color:#38bdf8;">USER ID</th><th style="color:#38bdf8;">NAME</th><th style="color:#38bdf8;">BALANCE</th><th style="color:#38bdf8;">PAYMENT</th><th style="color:#38bdf8;">STATUS</th><th style="color:#38bdf8;">EXPIRY</th></tr></thead>
-          <tbody>${recentRows || '<tr><td colspan="6" class="text-muted py-4 text-center">No accounts with positive balance.</td></tr>'}</tbody>
+          <tbody>${recentRows || '<tr><td colspan="6" class="text-muted py-4 text-center">No accounts with minimum ৳3 balance.</td></tr>'}</tbody>
         </table>
       </div>
     </div>
   </div>
 </div>
+${dashModals}
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>`;
     sendHtml(html);
@@ -1813,6 +1901,7 @@ const server = http.createServer((req, res) => {
       const safeId = String(u.user_id).replace(/[^a-zA-Z0-9]/g, '_');
       const editModalId = 'editModal_' + safeId;
       const payModalId = 'payModal_' + safeId;
+      const addBalanceModalId = 'addBalanceModal_' + safeId;
 
       // Find user payment transactions
       const userReqs = (db.payment_requests || []).filter(r => (r.user_id === u.user_id || r.target_user_id === u.user_id));
@@ -1825,7 +1914,10 @@ const server = http.createServer((req, res) => {
           <div class="text-light small">${u.name || ''}${u.phone ? ` • <span class="text-secondary">${u.phone}</span>` : ''}</div>
         </td>
         <td>
-          <span class="badge bg-success-subtle text-success border border-success px-2 py-1 fs-6 fw-bold">৳${balance}</span>
+          <div class="d-flex align-items-center gap-2">
+            <span class="badge bg-success-subtle text-success border border-success px-2 py-1 fs-6 fw-bold">৳${balance}</span>
+            <button type="button" class="btn btn-sm btn-success fw-bold px-2 py-0 text-nowrap" data-bs-toggle="modal" data-bs-target="#${addBalanceModalId}" title="টাকা যোগ করুন">➕ ৳ Add</button>
+          </div>
         </td>
         <td>
           <button type="button" class="btn btn-sm btn-outline-info rounded-pill px-3 py-1 fw-bold text-nowrap" data-bs-toggle="modal" data-bs-target="#${payModalId}" title="Click to view payment history">
@@ -1849,6 +1941,9 @@ const server = http.createServer((req, res) => {
                 ⚙️
               </button>
               <ul class="dropdown-menu dropdown-menu-dark dropdown-menu-end shadow">
+                <li><h6 class="dropdown-header text-info">Balance & Credits</h6></li>
+                <li><button type="button" class="dropdown-item text-success fw-bold" data-bs-toggle="modal" data-bs-target="#${addBalanceModalId}">➕ Add Balance (টাকা যোগ)</button></li>
+                <li><hr class="dropdown-divider border-secondary"></li>
                 <li><h6 class="dropdown-header text-info">Quick Renew</h6></li>
                 <li><form action="/admin/users/${encodeURIComponent(u.user_id)}/renew" method="POST"><input type="hidden" name="extend_days" value="7"><button type="submit" class="dropdown-item">+ 7 Days</button></form></li>
                 <li><form action="/admin/users/${encodeURIComponent(u.user_id)}/renew" method="POST"><input type="hidden" name="extend_days" value="30"><button type="submit" class="dropdown-item">+ 30 Days (1 Month)</button></form></li>
@@ -2003,6 +2098,43 @@ const server = http.createServer((req, res) => {
           </div>
         </div>
       </div>
+
+      <!-- 3. Add Balance Modal -->
+      <div class="modal fade" id="${addBalanceModalId}" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content bg-dark text-white border border-success shadow-lg">
+            <div class="modal-header border-secondary">
+              <h5 class="modal-title text-success fw-bold">➕ Add Balance: ${u.user_id}</h5>
+              <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form action="/admin/users/add-balance" method="POST">
+              <input type="hidden" name="target_user_id" value="${u.user_id}">
+              <input type="hidden" name="redirect_to" value="/admin/users">
+              <div class="modal-body text-start">
+                <div class="p-3 mb-3 rounded bg-secondary bg-opacity-25 border border-secondary">
+                  <div class="text-secondary small">কাস্টমার / ইউজার:</div>
+                  <div class="fs-5 fw-bold text-white">${u.user_id} ${u.name ? `(${u.name})` : ''}</div>
+                  <div class="mt-2 text-secondary small">বর্তমান ব্যালেন্স:</div>
+                  <div class="fs-4 fw-bold text-success">৳${balance}</div>
+                </div>
+                <div class="mb-3">
+                  <label class="text-success fw-bold small d-block mb-1">কত টাকা যোগ করতে চান? (ADD AMOUNT ৳)</label>
+                  <input type="number" step="1" min="1" name="amount" class="form-control form-control-lg bg-dark text-white border-success fw-bold" placeholder="যেমন: 20, 50, 100" required autofocus>
+                  <div class="text-secondary small mt-1">এই টাকা ইউজারের বর্তমান ব্যালেন্সের সাথে সরাসরি যোগ হয়ে যাবে।</div>
+                </div>
+                <div class="mb-3">
+                  <label class="text-info fw-bold small d-block mb-1">পেমেন্ট নোট / মাধ্যম (ঐচ্ছিক)</label>
+                  <input type="text" name="note" class="form-control bg-dark text-white border-secondary" placeholder="যেমন: ম্যানুয়াল রিচার্জ / bKash / ক্যাশ">
+                </div>
+              </div>
+              <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">বাতিল</button>
+                <button type="submit" class="btn btn-success fw-bold px-4">➕ টাকা যোগ করুন</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
       `;
     });
 
@@ -2046,6 +2178,7 @@ const server = http.createServer((req, res) => {
       </div>
       <div class="d-flex align-items-center gap-2">
         <input type="text" id="userSearch" class="form-control form-control-sm bg-dark text-white border-secondary" placeholder="🔍 Search user, phone..." style="width:220px;" onkeyup="filterUsers()">
+        <button type="button" class="btn btn-success btn-sm fw-bold px-3 py-2 text-nowrap" data-bs-toggle="modal" data-bs-target="#globalAddBalanceModal">➕ Add Balance (টাকা যোগ)</button>
         <a href="/admin/users/create" class="btn btn-primary btn-sm fw-bold px-3 py-2 text-nowrap">+ Create User ID</a>
       </div>
     </div>
@@ -2074,6 +2207,43 @@ const server = http.createServer((req, res) => {
 </div>
 
 ${modalsHtml}
+
+<!-- Global Add Balance Modal -->
+<div class="modal fade" id="globalAddBalanceModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content bg-dark text-white border border-success shadow-lg">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title text-success fw-bold">➕ Quick Add Balance / ম্যানুয়াল টাকা যোগ</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form action="/admin/users/add-balance" method="POST">
+        <input type="hidden" name="redirect_to" value="/admin/users">
+        <div class="modal-body text-start">
+          <div class="mb-3">
+            <label class="text-info fw-bold small d-block mb-1">১. ইউজার নির্বাচন করুন (SELECT USER)</label>
+            <select name="target_user_id" class="form-select bg-dark text-white border-secondary fw-bold" required>
+              <option value="">-- ইউজার বেছে নিন --</option>
+              ${db.users.map(u => `<option value="${u.user_id}">${u.user_id} ${u.name ? `(${u.name})` : ''} - বর্তমান ব্যালেন্স: ৳${Number(u.credits || 0).toFixed(1)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="text-success fw-bold small d-block mb-1">২. কত টাকা যোগ করতে চান? (AMOUNT ৳)</label>
+            <input type="number" step="1" min="1" name="amount" class="form-control form-control-lg bg-dark text-white border-success fw-bold" placeholder="যেমন: 20, 50, 100" required>
+            <div class="text-secondary small mt-1">এই টাকা ইউজারের বিদ্যমান ব্যালেন্সের সাথে সরাসরি যুক্ত হয়ে যাবে।</div>
+          </div>
+          <div class="mb-3">
+            <label class="text-info fw-bold small d-block mb-1">৩. পেমেন্ট মাধ্যম / নোট (ঐচ্ছিক)</label>
+            <input type="text" name="note" class="form-control bg-dark text-white border-secondary" placeholder="যেমন: ম্যানুয়াল রিচার্জ / bKash / নগদ">
+          </div>
+        </div>
+        <div class="modal-footer border-secondary">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">বাতিল</button>
+          <button type="submit" class="btn btn-success fw-bold px-4">➕ ব্যালেন্স যোগ করুন</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
