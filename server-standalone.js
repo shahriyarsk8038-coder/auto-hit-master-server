@@ -1713,8 +1713,8 @@ const server = http.createServer((req, res) => {
     const expired = db.users.filter(u => new Date(u.expires_at) <= now).length;
     const totalCredits = db.users.reduce((sum, u) => sum + (Number(u.credits) || 0), 0);
     
-    // Only show accounts that have positive balance
-    const recent = db.users.filter(u => (Number(u.credits) || 0) > 0);
+    // Show all user accounts sorted by balance
+    const recent = [...db.users];
     recent.sort((a, b) => (Number(b.credits) || 0) - (Number(a.credits) || 0));
 
     // Calculate today's deposits using Dhaka timezone (Asia/Dhaka)
@@ -1773,8 +1773,8 @@ const server = http.createServer((req, res) => {
     </div>
     <div class="stat">
       <div class="d-flex justify-content-between align-items-center mb-3">
-        <h5 class="fw-bold text-white mb-0">Active Balance Accounts (${recent.length})</h5>
-        <span class="badge bg-info-subtle text-info border border-info px-3 py-1">Showing only users with balance > 0</span>
+        <h5 class="fw-bold text-white mb-0">All User Accounts (${recent.length})</h5>
+        <span class="badge bg-info-subtle text-info border border-info px-3 py-1">All registered users</span>
       </div>
       <div class="table-responsive">
         <table class="table table-dark table-hover align-middle mb-0">
