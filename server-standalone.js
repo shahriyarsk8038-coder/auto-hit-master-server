@@ -1498,6 +1498,56 @@ const server = http.createServer((req, res) => {
       });
     }
 
+    if (pathname === '/admin/users/deduct-balance' || pathname === '/api/v1/admin/users/deduct-balance') {
+      return readBody((err, body) => {
+        const targetUserId = (body.target_user_id || '').trim();
+        const amount = parseFloat(body.amount) || 0;
+        const note = (body.note || 'Manual Deduction by Admin').trim();
+        const redirectUrl = body.redirect_to || '/admin/users';
+        const isApi = pathname.startsWith('/api/');
+
+        if (amount <= 0) {
+          if (isApi) return sendJson({ success: false, error: 'দয়া করে সঠিক টাকার পরিমাণ লিখুন!' }, 400);
+          return redirect(`${redirectUrl}?error=` + encodeURIComponent('দয়া করে সঠিক টাকার পরিমাণ লিখুন!'));
+        }
+
+        const db = loadDb();
+        const user = db.users.find(u => u.user_id === targetUserId || u.phone === targetUserId);
+        if (!user) {
+          if (isApi) return sendJson({ success: false, error: `ইউজার "${targetUserId}" খুঁজে পাওয়া যায়নি!` }, 404);
+          return redirect(`${redirectUrl}?error=` + encodeURIComponent(`ইউজার "${targetUserId}" খুঁজে পাওয়া যায়নি!`));
+        }
+
+        const currentCredits = parseFloat(user.credits) || 0;
+        if (currentCredits < amount) {
+          const errMsg = `ইউজারের বর্তমান ব্যালেন্স (৳${currentCredits}) এর চেয়ে বেশি টাকা কাটা সম্ভব নয়!`;
+          if (isApi) return sendJson({ success: false, error: errMsg }, 400);
+          return redirect(`${redirectUrl}?error=` + encodeURIComponent(errMsg));
+        }
+
+        user.credits = Math.max(0, Math.round((currentCredits - amount) * 100) / 100);
+        user.payment_note = note;
+
+        if (!db.deposits) db.deposits = [];
+        db.deposits.unshift({
+          id: 'DED_' + Date.now(),
+          user_id: user.user_id,
+          name: user.name || ('User ' + user.user_id),
+          amount: -amount,
+          credits: -amount,
+          method: 'Admin Manual (Deduct)',
+          trx_id: 'DEDUCT_' + Date.now(),
+          sender_mobile: user.phone || user.user_id,
+          created_at: new Date().toISOString(),
+          note: note
+        });
+
+        saveDb(db);
+        if (isApi) return sendJson({ success: true, message: `সফলভাবে ৳${amount} টাকা কর্তন করা হয়েছে!`, new_credits: user.credits, user_id: user.user_id });
+        return redirect(`${redirectUrl}?msg=` + encodeURIComponent(`সফলভাবে ৳${amount} টাকা কর্তন করা হয়েছে! নতুন ব্যালেন্স: ৳${user.credits} (${user.user_id})`));
+      });
+    }
+
     if (pathname === '/admin/users/update-user-payment') {
       return readBody((err, body) => {
         const targetUserId = (body.target_user_id || '').trim();
@@ -1771,13 +1821,15 @@ const server = http.createServer((req, res) => {
       const balance = u.credits != null ? Number(u.credits).toFixed(1) : '0';
       const safeId = String(u.user_id).replace(/[^a-zA-Z0-9]/g, '_');
       const dashModalId = 'dashAddModal_' + safeId;
+      const dashDeductModalId = 'dashDeductModal_' + safeId;
       recentRows += `<tr>
         <td class="fw-bold text-info">${u.user_id}</td>
         <td class="text-white">${u.name || '-'}</td>
         <td>
-          <div class="d-flex align-items-center gap-2">
+          <div class="d-flex align-items-center gap-1">
             <span class="badge bg-success-subtle text-success border border-success fw-bold px-2 py-1 fs-6">৳${balance}</span>
-            <button type="button" class="btn btn-sm btn-success fw-bold px-2 py-0 text-nowrap" data-bs-toggle="modal" data-bs-target="#${dashModalId}" title="টাকা যোগ করুন">➕ ৳ Add</button>
+            <button type="button" class="btn btn-sm btn-success fw-bold px-2 py-0 text-nowrap" data-bs-toggle="modal" data-bs-target="#${dashModalId}" title="টাকা যোগ করুন">➕ Add</button>
+            <button type="button" class="btn btn-sm btn-outline-danger fw-bold px-2 py-0 text-nowrap" data-bs-toggle="modal" data-bs-target="#${dashDeductModalId}" title="টাকা কাটুন">➖ Cut</button>
           </div>
         </td>
         <td>${u.payment_amount ? `<span class="badge bg-info text-dark fw-bold">৳${u.payment_amount}</span>` : '<span class="text-secondary small">-</span>'}</td>
@@ -1786,6 +1838,7 @@ const server = http.createServer((req, res) => {
       </tr>`;
 
       dashModals += `
+      <!-- Add Balance Modal -->
       <div class="modal fade" id="${dashModalId}" tabindex="-1">
         <div class="modal-dialog modal-dialog-centered">
           <div class="modal-content bg-dark text-white border border-success shadow-lg">
@@ -1816,6 +1869,43 @@ const server = http.createServer((req, res) => {
               <div class="modal-footer border-secondary">
                 <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">বাতিল</button>
                 <button type="submit" class="btn btn-success fw-bold px-4">➕ টাকা যোগ করুন</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <!-- Deduct Balance Modal -->
+      <div class="modal fade" id="${dashDeductModalId}" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content bg-dark text-white border border-danger shadow-lg">
+            <div class="modal-header border-secondary">
+              <h5 class="modal-title text-danger fw-bold">➖ Deduct Balance: ${u.user_id}</h5>
+              <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form action="/admin/users/deduct-balance" method="POST">
+              <input type="hidden" name="target_user_id" value="${u.user_id}">
+              <input type="hidden" name="redirect_to" value="/admin/dashboard">
+              <div class="modal-body text-start">
+                <div class="p-3 mb-3 rounded bg-secondary bg-opacity-25 border border-secondary">
+                  <div class="text-secondary small">কাস্টমার / ইউজার:</div>
+                  <div class="fs-5 fw-bold text-white">${u.user_id} ${u.name ? `(${u.name})` : ''}</div>
+                  <div class="mt-2 text-secondary small">বর্তমান ব্যালেন্স:</div>
+                  <div class="fs-4 fw-bold text-success">৳${balance}</div>
+                </div>
+                <div class="mb-3">
+                  <label class="text-danger fw-bold small d-block mb-1">কত টাকা কাটতে চান? (DEDUCT AMOUNT ৳)</label>
+                  <input type="number" step="1" min="1" max="${balance}" name="amount" class="form-control form-control-lg bg-dark text-white border-danger fw-bold" placeholder="যেমন: 10, 20, 50" required autofocus>
+                  <div class="text-secondary small mt-1">এই টাকা ইউজারের বর্তমান ব্যালেন্স থেকে সরাসরি কর্তন / বিয়োগ করা হবে।</div>
+                </div>
+                <div class="mb-3">
+                  <label class="text-info fw-bold small d-block mb-1">কর্তনের কারণ / নোট (ঐচ্ছিক)</label>
+                  <input type="text" name="note" class="form-control bg-dark text-white border-secondary" placeholder="যেমন: ভুল রিচার্জ অ্যাডজাস্ট / রিফান্ড">
+                </div>
+              </div>
+              <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">বাতিল</button>
+                <button type="submit" class="btn btn-danger fw-bold px-4">➖ টাকা কাটুন</button>
               </div>
             </form>
           </div>
@@ -1902,6 +1992,7 @@ ${dashModals}
       const editModalId = 'editModal_' + safeId;
       const payModalId = 'payModal_' + safeId;
       const addBalanceModalId = 'addBalanceModal_' + safeId;
+      const deductBalanceModalId = 'deductBalanceModal_' + safeId;
 
       // Find user payment transactions
       const userReqs = (db.payment_requests || []).filter(r => (r.user_id === u.user_id || r.target_user_id === u.user_id));
@@ -1914,9 +2005,10 @@ ${dashModals}
           <div class="text-light small">${u.name || ''}${u.phone ? ` • <span class="text-secondary">${u.phone}</span>` : ''}</div>
         </td>
         <td>
-          <div class="d-flex align-items-center gap-2">
+          <div class="d-flex align-items-center gap-1">
             <span class="badge bg-success-subtle text-success border border-success px-2 py-1 fs-6 fw-bold">৳${balance}</span>
-            <button type="button" class="btn btn-sm btn-success fw-bold px-2 py-0 text-nowrap" data-bs-toggle="modal" data-bs-target="#${addBalanceModalId}" title="টাকা যোগ করুন">➕ ৳ Add</button>
+            <button type="button" class="btn btn-sm btn-success fw-bold px-2 py-0 text-nowrap" data-bs-toggle="modal" data-bs-target="#${addBalanceModalId}" title="টাকা যোগ করুন">➕ Add</button>
+            <button type="button" class="btn btn-sm btn-outline-danger fw-bold px-2 py-0 text-nowrap" data-bs-toggle="modal" data-bs-target="#${deductBalanceModalId}" title="টাকা কাটুন">➖ Cut</button>
           </div>
         </td>
         <td>
@@ -1943,6 +2035,7 @@ ${dashModals}
               <ul class="dropdown-menu dropdown-menu-dark dropdown-menu-end shadow">
                 <li><h6 class="dropdown-header text-info">Balance & Credits</h6></li>
                 <li><button type="button" class="dropdown-item text-success fw-bold" data-bs-toggle="modal" data-bs-target="#${addBalanceModalId}">➕ Add Balance (টাকা যোগ)</button></li>
+                <li><button type="button" class="dropdown-item text-danger fw-bold" data-bs-toggle="modal" data-bs-target="#${deductBalanceModalId}">➖ Deduct Balance (টাকা কাটুন)</button></li>
                 <li><hr class="dropdown-divider border-secondary"></li>
                 <li><h6 class="dropdown-header text-info">Quick Renew</h6></li>
                 <li><form action="/admin/users/${encodeURIComponent(u.user_id)}/renew" method="POST"><input type="hidden" name="extend_days" value="7"><button type="submit" class="dropdown-item">+ 7 Days</button></form></li>
@@ -2135,6 +2228,43 @@ ${dashModals}
           </div>
         </div>
       </div>
+
+      <!-- 4. Deduct Balance Modal -->
+      <div class="modal fade" id="${deductBalanceModalId}" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content bg-dark text-white border border-danger shadow-lg">
+            <div class="modal-header border-secondary">
+              <h5 class="modal-title text-danger fw-bold">➖ Deduct Balance: ${u.user_id}</h5>
+              <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form action="/admin/users/deduct-balance" method="POST">
+              <input type="hidden" name="target_user_id" value="${u.user_id}">
+              <input type="hidden" name="redirect_to" value="/admin/users">
+              <div class="modal-body text-start">
+                <div class="p-3 mb-3 rounded bg-secondary bg-opacity-25 border border-secondary">
+                  <div class="text-secondary small">কাস্টমার / ইউজার:</div>
+                  <div class="fs-5 fw-bold text-white">${u.user_id} ${u.name ? `(${u.name})` : ''}</div>
+                  <div class="mt-2 text-secondary small">বর্তমান ব্যালেন্স:</div>
+                  <div class="fs-4 fw-bold text-success">৳${balance}</div>
+                </div>
+                <div class="mb-3">
+                  <label class="text-danger fw-bold small d-block mb-1">কত টাকা কাটতে চান? (DEDUCT AMOUNT ৳)</label>
+                  <input type="number" step="1" min="1" max="${balance}" name="amount" class="form-control form-control-lg bg-dark text-white border-danger fw-bold" placeholder="যেমন: 10, 20, 50" required autofocus>
+                  <div class="text-secondary small mt-1">এই টাকা ইউজারের বর্তমান ব্যালেন্স থেকে সরাসরি কর্তন / বিয়োগ করা হবে।</div>
+                </div>
+                <div class="mb-3">
+                  <label class="text-info fw-bold small d-block mb-1">কর্তনের কারণ / নোট (ঐচ্ছিক)</label>
+                  <input type="text" name="note" class="form-control bg-dark text-white border-secondary" placeholder="যেমন: ভুল রিচার্জ অ্যাডজাস্ট / রিফান্ড">
+                </div>
+              </div>
+              <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">বাতিল</button>
+                <button type="submit" class="btn btn-danger fw-bold px-4">➖ টাকা কাটুন</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
       `;
     });
 
@@ -2179,6 +2309,7 @@ ${dashModals}
       <div class="d-flex align-items-center gap-2">
         <input type="text" id="userSearch" class="form-control form-control-sm bg-dark text-white border-secondary" placeholder="🔍 Search user, phone..." style="width:220px;" onkeyup="filterUsers()">
         <button type="button" class="btn btn-success btn-sm fw-bold px-3 py-2 text-nowrap" data-bs-toggle="modal" data-bs-target="#globalAddBalanceModal">➕ Add Balance (টাকা যোগ)</button>
+        <button type="button" class="btn btn-outline-danger btn-sm fw-bold px-3 py-2 text-nowrap" data-bs-toggle="modal" data-bs-target="#globalDeductBalanceModal">➖ Deduct (টাকা কাটুন)</button>
         <a href="/admin/users/create" class="btn btn-primary btn-sm fw-bold px-3 py-2 text-nowrap">+ Create User ID</a>
       </div>
     </div>
@@ -2239,6 +2370,43 @@ ${modalsHtml}
         <div class="modal-footer border-secondary">
           <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">বাতিল</button>
           <button type="submit" class="btn btn-success fw-bold px-4">➕ ব্যালেন্স যোগ করুন</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Global Deduct Balance Modal -->
+<div class="modal fade" id="globalDeductBalanceModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content bg-dark text-white border border-danger shadow-lg">
+      <div class="modal-header border-secondary">
+        <h5 class="modal-title text-danger fw-bold">➖ Quick Deduct Balance / ম্যানুয়াল টাকা কর্তন</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form action="/admin/users/deduct-balance" method="POST">
+        <input type="hidden" name="redirect_to" value="/admin/users">
+        <div class="modal-body text-start">
+          <div class="mb-3">
+            <label class="text-info fw-bold small d-block mb-1">১. ইউজার নির্বাচন করুন (SELECT USER)</label>
+            <select name="target_user_id" class="form-select bg-dark text-white border-secondary fw-bold" required>
+              <option value="">-- ইউজার বেছে নিন --</option>
+              ${db.users.map(u => `<option value="${u.user_id}">${u.user_id} ${u.name ? `(${u.name})` : ''} - বর্তমান ব্যালেন্স: ৳${Number(u.credits || 0).toFixed(1)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="text-danger fw-bold small d-block mb-1">২. কত টাকা কাটতে চান? (AMOUNT ৳)</label>
+            <input type="number" step="1" min="1" name="amount" class="form-control form-control-lg bg-dark text-white border-danger fw-bold" placeholder="যেমন: 10, 20, 50" required>
+            <div class="text-secondary small mt-1">এই টাকা ইউজারের বিদ্যমান ব্যালেন্স থেকে সরাসরি বাদ বা কর্তন হয়ে যাবে।</div>
+          </div>
+          <div class="mb-3">
+            <label class="text-info fw-bold small d-block mb-1">৩. কর্তনের কারণ / নোট (ঐচ্ছিক)</label>
+            <input type="text" name="note" class="form-control bg-dark text-white border-secondary" placeholder="যেমন: ভুল রিচার্জ অ্যাডজাস্ট / রিফান্ড">
+          </div>
+        </div>
+        <div class="modal-footer border-secondary">
+          <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">বাতিল</button>
+          <button type="submit" class="btn btn-danger fw-bold px-4">➖ ব্যালেন্স কর্তন করুন</button>
         </div>
       </form>
     </div>
