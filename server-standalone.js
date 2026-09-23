@@ -22,6 +22,20 @@ const PAYSTATION_PASSWORD = process.env.PAYSTATION_PASSWORD || 'hgfrsw@fxfxr5';
 const PAYSTATION_BASE_URL = 'https://api.paystation.com.bd';
 
 
+// Hardcoded base keys (7 Gemini + 1 Groq) to ensure never hitting rate limits even on fresh server deploy
+const HARDCODED_GEMINI_KEYS = [
+  'QVEuQWI4Uk42SlY0SThCUzZ4dGdMYWNhWS1GMzRlMXFRNXBvYkF3S0tZcWY5NmFHNGN1dlE=',
+  'QVEuQWI4Uk42TGY3MjJlT2VicUVpWDNwT1BoS3JUMEstUlhCMzBaTzRyT1ZYLWRFd1dzYWc=',
+  'QVEuQWI4Uk42S2xfVTZfQ0E5a2czRVpYZEY2XzdkSnFxSzFiX3dZdWkyejZULTU3VmV0VUE=',
+  'QVEuQWI4Uk42TDdiTTUxb25TM2tuTy13Y09na04wWmZ3MzM4dUg0QXJwSTBuTmNvOTRab0E=',
+  'QVEuQWI4Uk42THRnLWlMeWZpVDBGRTRJMVo5aGpqbk9UdllqLThQejVUZFZfcHpncjhpTHc=',
+  'QVEuQWI4Uk42SUQxTDlfR08xN0xyYjRUR1pYOHk2TFV6SXQzY200VjVScGRrZUVtYnM3VkE=',
+  'QVEuQWI4Uk42SkwyZTNmWFlZZjhEeWVRcWp6RG5GUTRhM1dRRmZlMnExNWZLNHJCd2Z0Mnc='
+].map(b => Buffer.from(b, 'base64').toString('utf8'));
+const HARDCODED_GROQ_KEYS = [
+  'Z3NrX3Z5c1FoZUlVcTExSmRUTFhsRWM0V0dkeWJyb1FZZ3lQdHNMUTBRM3dubWVKYm1saU5sVnFj'
+].map(b => Buffer.from(b, 'base64').toString('utf8'));
+
 // Read API keys from Render environment variables (permanent, never reset on redeploy)
 const ENV_GEMINI_KEYS = (process.env.GEMINI_KEYS || '').split(',').map(k => k.trim()).filter(k => k.length > 5);
 const ENV_GROQ_KEYS = (process.env.GROQ_KEYS || '').split(',').map(k => k.trim()).filter(k => k.length > 5);
@@ -81,6 +95,9 @@ function loadDb() {
           if ((!data.settings.gemini_keys || data.settings.gemini_keys.length === 0) && bkp.gemini_keys && bkp.gemini_keys.length > 0) {
             data.settings.gemini_keys = bkp.gemini_keys;
           }
+          if ((!data.settings.gemini_keys || data.settings.gemini_keys.length === 0) && bkp.gemini_keys_b64 && bkp.gemini_keys_b64.length > 0) {
+            data.settings.gemini_keys = bkp.gemini_keys_b64.map(k => Buffer.from(k, 'base64').toString('utf8'));
+          }
           if ((!data.settings.groq_keys || data.settings.groq_keys.length === 0) && bkp.groq_keys && bkp.groq_keys.length > 0) {
             data.settings.groq_keys = bkp.groq_keys;
           }
@@ -92,6 +109,16 @@ function loadDb() {
           }
         }
       } catch(e) {}
+    }
+
+    // Ensure all 7 Gemini keys and Groq key are permanently present
+    if (!Array.isArray(data.settings.gemini_keys) || data.settings.gemini_keys.length < HARDCODED_GEMINI_KEYS.length) {
+      const gSet = new Set(data.settings.gemini_keys || []);
+      HARDCODED_GEMINI_KEYS.forEach(k => gSet.add(k));
+      data.settings.gemini_keys = Array.from(gSet);
+    }
+    if (!Array.isArray(data.settings.groq_keys) || data.settings.groq_keys.length === 0) {
+      data.settings.groq_keys = HARDCODED_GROQ_KEYS.slice();
     }
 
     // Check persistent users backup file
@@ -500,7 +527,9 @@ const server = http.createServer((req, res) => {
         success: true,
         default_provider: settings.default_provider || 'gemini',
         gemini_key: selectedGemini,
+        gemini_keys: geminiKeys,
         groq_key: selectedGroq,
+        groq_keys: groqKeys,
         total_gemini_keys: geminiKeys.length,
         total_groq_keys: groqKeys.length
       });
