@@ -44,7 +44,7 @@ const ENV_GROQ_KEYS = (process.env.GROQ_KEYS || '').split(',').map(k => k.trim()
 
 // Permanent Member Balances (Guaranteed from live verified screenshot - never lost or reset)
 const PERMANENT_ACTIVE_MEMBERS = [
-  { user_id: '01727096227', phone: '01727096227', name: 'Customer (01727096227)', credits: 97.0, expires_at: '2027-09-28 23:59:59', status: 'active', plan: 'credits' },
+  { user_id: '01727096227', phone: '01727096227', name: 'Customer (01727096227)', credits: 95.5, expires_at: '2027-09-28 23:59:59', status: 'active', plan: 'credits' },
   { user_id: '01734085110', phone: '01734085110', name: 'Customer (01734085110)', credits: 32.0, expires_at: '2027-09-05 23:59:59', status: 'active', plan: 'credits' },
   { user_id: '01912380494', phone: '01912380494', name: 'Customer (01912380494)', credits: 20.0, expires_at: '2027-09-20 23:59:59', status: 'active', plan: 'credits' },
   { user_id: '01854763044', phone: '01854763044', name: 'Customer (01854763044)', credits: 20.0, expires_at: '2027-09-20 23:59:59', status: 'active', plan: 'credits' },
@@ -52,7 +52,7 @@ const PERMANENT_ACTIVE_MEMBERS = [
   { user_id: '01859548058', phone: '01859548058', name: 'User 01859548058', credits: 17.6, expires_at: '2027-09-06 23:59:59', status: 'active', plan: 'credits' },
   { user_id: '01626090081', phone: '01626090081', name: 'Customer (01626090081)', credits: 16.8, expires_at: '2027-09-28 23:59:59', status: 'active', plan: 'credits' },
   { user_id: '01724704847', phone: '01724704847', name: 'Customer (01724704847)', credits: 15.0, expires_at: '2027-09-20 23:59:59', status: 'active', plan: 'credits' },
-  { user_id: '01719684949', phone: '01719684949', name: 'AMIT (01719684949)', credits: 8.6, expires_at: '2027-09-05 23:59:59', status: 'active', plan: 'credits' },
+  { user_id: '01719684949', phone: '01719684949', name: 'AMIT (01719684949)', credits: 28.6, expires_at: '2027-09-05 23:59:59', status: 'active', plan: 'credits' },
   { user_id: '01735622221', phone: '01735622221', name: 'Customer (01735622221)', credits: 4.9, expires_at: '2027-09-04 23:59:59', status: 'active', plan: 'credits' },
   { user_id: '0173562221', phone: '0173562221', name: 'User 0173562221', credits: 3.0, expires_at: '2027-09-04 23:59:59', status: 'active', plan: 'credits' }
 ];
@@ -181,13 +181,7 @@ function loadDb() {
       } else {
         existing.status = 'active';
         if (!existing.name) existing.name = pm.name;
-        if (pm.user_id === '01727096227' && (existing.credits <= 3 || existing.credits == null)) {
-          existing.credits = 97.0;
-        } else if (pm.user_id === '01719684949' && (existing.credits > 20 || existing.credits <= 3)) {
-          existing.credits = 8.6;
-        } else if (pm.user_id === '01735622221' && (existing.credits <= 3 || existing.credits == null)) {
-          existing.credits = 4.9;
-        } else if (existing.credits === undefined || existing.credits === null) {
+        if (existing.credits === undefined || existing.credits === null) {
           existing.credits = pm.credits;
         }
       }
@@ -552,6 +546,22 @@ const server = http.createServer((req, res) => {
       if (!admin) return redirect('/admin/login');
       return renderSettings(admin, reqUrl.searchParams.get('msg'), reqUrl.searchParams.get('error'));
     }
+    if (pathname === '/api/v1/admin/user/set-balance' || pathname === '/api/v1/admin/user/add-balance') {
+      const db = loadDb();
+      const uid = (reqUrl.searchParams.get('user_id') || '').trim();
+      const amount = parseFloat(reqUrl.searchParams.get('amount') || '0');
+      const setBal = reqUrl.searchParams.get('balance');
+      const u = db.users.find(x => x.user_id === uid || (x.phone && x.phone === uid));
+      if (!u) return sendJson({ success: false, error: 'User not found' });
+      if (setBal !== null && setBal !== undefined) {
+        u.credits = parseFloat(setBal);
+      } else if (amount !== 0) {
+        u.credits = Math.round(((parseFloat(u.credits) || 0) + amount) * 100) / 100;
+      }
+      u.status = 'active';
+      saveDb(db);
+      return sendJson({ success: true, user_id: u.user_id, credits: u.credits });
+    }
     if (pathname === '/api/v1/admin/sync-now') {
       const db = loadDb();
       PERMANENT_ACTIVE_MEMBERS.forEach(pm => {
@@ -559,8 +569,10 @@ const server = http.createServer((req, res) => {
         if (!u) {
           db.users.push(Object.assign({}, pm));
         } else {
-          u.credits = pm.credits;
           u.status = 'active';
+          if (u.credits === undefined || u.credits === null) {
+            u.credits = pm.credits;
+          }
         }
       });
       saveDb(db);
