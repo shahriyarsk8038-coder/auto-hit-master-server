@@ -1,0 +1,156 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy - Indian Visa Auto Fill Master</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; max-width: 900px; margin: 40px auto; padding: 0 24px; color: #2d3748; background: #ffffff; }
+    h1 { color: #1a365d; border-bottom: 2px solid #e2e8f0; padding-bottom: 12px; font-size: 2rem; margin-bottom: 8px; }
+    h2 { color: #2b6cb0; margin-top: 32px; margin-bottom: 12px; font-size: 1.35rem; border-bottom: 1px solid #edf2f7; padding-bottom: 6px; }
+    h3 { color: #2d3748; margin-top: 20px; margin-bottom: 8px; font-size: 1.1rem; }
+    p, li { color: #4a5568; font-size: 1rem; line-height: 1.7; }
+    ul, ol { padding-left: 24px; margin-bottom: 16px; }
+    li { margin-bottom: 8px; }
+    .updated { color: #718096; font-size: 0.95rem; margin-bottom: 28px; }
+    .highlight-box { background: #ebf8ff; border-left: 4px solid #3182ce; padding: 16px 20px; border-radius: 6px; margin: 20px 0; }
+    .compliance-box { background: #f0fdf4; border-left: 4px solid #16a34a; padding: 16px 20px; border-radius: 6px; margin: 20px 0; }
+    table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+    th, td { border: 1px solid #e2e8f0; padding: 10px 14px; text-align: left; font-size: 0.95rem; }
+    th { background: #f7fafc; color: #2d3748; }
+    code { background: #edf2f7; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
+    .contact-box { background: #f7fafc; border: 1px solid #e2e8f0; padding: 20px; border-radius: 8px; margin-top: 32px; }
+  </style>
+</head>
+<body>
+  <h1>Privacy Policy for Indian Visa Auto Fill Master</h1>
+  <p class="updated"><strong>Effective Date:</strong> September 4, 2026 | <strong>Last Updated:</strong> September 28, 2026</p>
+
+  <p>This Privacy Policy applies to the Google Chrome extension <strong>Indian Visa Auto Fill Master</strong> (referred to as "the Extension", "we", "us", or "our"). We are committed to maintaining the confidentiality, integrity, and security of our users' personal data. This policy outlines our practices concerning user data <strong>collection</strong>, <strong>handling</strong>, <strong>storage</strong>, and <strong>sharing</strong> in strict compliance with the Google Chrome Web Store Developer Program Policies, User Data Privacy requirements, and the Limited Use policy (Purple Nickel).</p>
+
+  <div class="compliance-box">
+    <strong>Chrome Web Store User Data Compliance & Limited Use Declarations:</strong>
+    <ul>
+      <li><strong>No Sale of User Data:</strong> We do not sell, rent, trade, monetize, or transfer personal user data to third parties for monetary or other consideration under any circumstances.</li>
+      <li><strong>Single Purpose Adherence:</strong> User data is handled exclusively to facilitate the autofilling of visa application forms on the official Indian Visa Online portal (<code>indianvisa-bangladesh.nic.in</code>) and for no other purpose.</li>
+      <li><strong>No Lending or Creditworthiness Assessment:</strong> We do not use or transfer user data to determine creditworthiness, lending eligibility, or for financial assessment purposes.</li>
+      <li><strong>No Advertising or Tracking:</strong> We do not use, share, or transfer personal data for personalized advertising, cross-context behavioral tracking, retargeting, or market research.</li>
+      <li><strong>Strict Local Storage:</strong> All applicant records, passport details, and profiles remain strictly stored in local browser sandbox storage on the user's machine (<code>chrome.storage.local</code>).</li>
+    </ul>
+  </div>
+
+  <h2>1. Single Purpose Description</h2>
+  <p>The sole and exclusive purpose of <strong>Indian Visa Auto Fill Master</strong> is to assist applicants in efficiently completing visa application forms on the official Government of India visa application portal (<code>indianvisa-bangladesh.nic.in</code>) by autofilling form fields with data provided directly by the user from travel documents (such as passport biometric pages and previous visa application PDF files).</p>
+
+  <h2>2. User Data Collection</h2>
+  <p>The Extension collects and processes user data only when explicitly and voluntarily provided by the user. We collect the following categories of information:</p>
+  <ul>
+    <li><strong>Personally Identifiable Information (PII):</strong> Applicant full name (given name, surname), date of birth, place and country of birth, gender, marital status, religion, educational background, visible identification marks, and parents' and spouse's names.</li>
+    <li><strong>Government Identification & Travel Credentials:</strong> Passport number, passport date of issue, passport expiry date, place of issue, and National ID / Citizen ID numbers.</li>
+    <li><strong>Contact & Residence Details:</strong> Present address, permanent address, contact telephone/mobile number, and email address.</li>
+    <li><strong>Travel Details & References:</strong> Expected arrival date, port of arrival/departure, visa duration, visa entry type, hotel/place of stay in India, and contact information for references in India and Bangladesh.</li>
+    <li><strong>Temporary Application Identifiers:</strong> Portal-assigned Temporary Application IDs (e.g. BGD application IDs) retrieved directly from the visa website page during navigation, saved locally to allow the user to resume and track form progress.</li>
+  </ul>
+  <p><em>The Extension does not collect browsing history, cookies from unrelated websites, financial credentials, credit card numbers, passwords, or device location data.</em></p>
+
+  <h2>3. User Data Handling and Processing</h2>
+  <p>All data handling is strictly user-initiated and operates as follows:</p>
+  <ul>
+    <li><strong>Autofill Form Injection:</strong> When the user is on the official visa portal (<code>indianvisa-bangladesh.nic.in</code>) and triggers the autofill action ("Fill" or "Fill this page"), the Extension reads the applicant data from local storage and programmatically sets the matching input fields and select dropdowns on the active visa form tab.</li>
+    <li><strong>Document Scanning & OCR:</strong> When the user uploads or drops a travel document (e.g., passport bio page image or BGD application PDF), the document is processed in memory to extract text. If cloud AI document parsing is enabled, the document text or image is transmitted via secure encrypted HTTPS to an AI parsing endpoint (Google Gemini API / Groq API) strictly in-memory to extract structured fields into the user's local profile. The document payload is discarded immediately after extraction and is never retained, logged, or used for AI model training.</li>
+  </ul>
+
+  <h2>4. User Data Storage and Retention</h2>
+  <ul>
+    <li><strong>Storage Location:</strong> All profile records, user settings, and application IDs are stored strictly on the user's local device using Google Chrome's sandboxed local storage (<code>chrome.storage.local</code>).</li>
+    <li><strong>No Central Cloud Profile Database:</strong> We do not operate or maintain any remote server or central database where user passport photos, personal records, or applicant profiles are stored.</li>
+    <li><strong>Retention Period:</strong> Stored data is retained locally on your computer only for as long as you choose to keep it. The Extension does not automatically expire, transfer, or upload your saved profiles.</li>
+  </ul>
+
+  <h2>5. User Data Sharing and Third-Party Disclosure</h2>
+  <p>We maintain strict zero-sharing policies regarding user personal data:</p>
+  <ul>
+    <li><strong>Zero Third-Party Sharing:</strong> We do not sell, rent, barter, disclose, or transfer personal user data to any commercial third parties, data brokers, advertisers, or analytics providers.</li>
+    <li><strong>Official Visa Portal Submission:</strong> Personal data is transmitted only to the official government visa portal (<code>indianvisa-bangladesh.nic.in</code>) via standard form submission when the user submits their completed visa application.</li>
+    <li><strong>API Parsing Endpoints:</strong> When user chooses to parse documents via AI, data transmission is conducted over secure encrypted TLS (HTTPS) solely for real-time text extraction and is never stored on the AI provider's servers.</li>
+    <li><strong>Legal Compliance:</strong> We will not disclose personal data to law enforcement or governmental bodies unless formally compelled by a valid and binding court order.</li>
+  </ul>
+
+  <h2>6. Chrome Web Store Limited Use Disclosure</h2>
+  <p>Indian Visa Auto Fill Master adheres to the Chrome Web Store User Data Policy, including the Limited Use requirements:</p>
+  <ol>
+    <li>We do not sell user data to third parties.</li>
+    <li>We do not use or transfer user data for purposes that are unrelated to the Extension's single purpose of autofilling Indian visa application forms.</li>
+    <li>We do not use or transfer user data to determine creditworthiness or for lending purposes.</li>
+    <li>We do not share user data with advertising platforms, data brokers, or information resellers.</li>
+  </ol>
+
+  <h2>7. User Control, Rights, and Data Deletion</h2>
+  <p>Users have complete and absolute control over their data at all times:</p>
+  <ul>
+    <li><strong>View & Edit:</strong> You can review and edit every saved applicant profile directly in the extension's side panel or editor interface.</li>
+    <li><strong>Individual Profile Deletion:</strong> Clicking the "Delete" button next to any profile permanently removes it from your device's local storage immediately.</li>
+    <li><strong>Complete Data Purge:</strong> Clicking "Clear profiles" or "Delete all" in the extension wipes all saved profiles and temporary IDs simultaneously.</li>
+    <li><strong>Uninstallation:</strong> Removing or uninstalling Indian Visa Auto Fill Master from Google Chrome instantly and irreversibly deletes all stored profile data from <code>chrome.storage.local</code>.</li>
+  </ul>
+
+  <h2>8. Chrome Extension Permissions Justification</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Permission</th>
+        <th>Justification & Purpose</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>storage</code> & <code>unlimitedStorage</code></td>
+        <td>Required to save applicant profiles, visa preferences, and temporary application IDs locally on the user's machine.</td>
+      </tr>
+      <tr>
+        <td><code>scripting</code> & <code>activeTab</code></td>
+        <td>Required to inject form autofilling logic into the active tab of the official visa portal when the user explicitly requests form fill.</td>
+      </tr>
+      <tr>
+        <td><code>sidePanel</code></td>
+        <td>Required to render the applicant selector and document reader interface alongside the visa portal webpage.</td>
+      </tr>
+      <tr>
+        <td><code>downloads</code></td>
+        <td>Required to allow the applicant to save generated application documents (such as visa letters or photo assets) directly to their computer.</td>
+      </tr>
+      <tr>
+        <td><code>tabs</code></td>
+        <td>Required to verify whether the active browser tab is located on the official Indian visa application portal before executing autofill.</td>
+      </tr>
+      <tr>
+        <td><code>offscreen</code></td>
+        <td>Required to process client-side image cropping and optical character recognition in a sandboxed background document without interrupting the user.</td>
+      </tr>
+      <tr>
+        <td><code>alarms</code></td>
+        <td>Required for background periodic license verification and local cache cleanup.</td>
+      </tr>
+      <tr>
+        <td><code>host_permissions</code> (<code>indianvisa-bangladesh.nic.in</code>)</td>
+        <td>Strictly limited to the official Indian visa portal to read form field names and fill applicant values upon user request.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>9. Security and Encryption</h2>
+  <p>All network communications (such as license verification and AI document parsing) use industry-standard HTTPS / TLS 1.3 encryption in transit. User data stored locally within <code>chrome.storage.local</code> is sandboxed and protected by Google Chrome's built-in multi-process security architecture.</p>
+
+  <h2>10. Children's Privacy</h2>
+  <p>The Extension does not knowingly collect or solicit personal information from children under the age of 13. Any visa application details relating to minor children must be entered and managed exclusively by their parent or legal guardian.</p>
+
+  <h2>11. Developer Contact Information</h2>
+  <div class="contact-box">
+    <p>If you have any questions, inquiries, or requests regarding this Privacy Policy or your data, please contact the developer directly:</p>
+    <p><strong>Item Name:</strong> Indian Visa Auto Fill Master<br>
+    <strong>Item ID:</strong> mebjppfdddgmimnfdgonafelkjmnblmf<br>
+    <strong>Publisher:</strong> Shahriyar<br>
+    <strong>Contact Email:</strong> <a href="mailto:shahriyarsk8038@gmail.com">shahriyarsk8038@gmail.com</a></p>
+  </div>
+</body>
+</html>
