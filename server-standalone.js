@@ -576,10 +576,12 @@ const server = http.createServer((req, res) => {
       const db = loadDb();
       const settings = db.settings || {};
 
-      // Use DB keys first, fallback to Render environment variables (permanent)
-      const geminiKeys = ((settings.gemini_keys || []).filter(k => k && k.trim().length > 10).length > 0
-        ? settings.gemini_keys.filter(k => k && k.trim().length > 10)
-        : ENV_GEMINI_KEYS).filter(k => k && k.trim().length > 10);
+      // Ensure all 9 verified Gemini keys are present
+      const geminiKeys = Array.from(new Set([
+        ...HARDCODED_GEMINI_KEYS,
+        ...(settings.gemini_keys || []),
+        ...ENV_GEMINI_KEYS
+      ])).filter(k => k && k.trim().length > 10);
       let selectedGemini = '';
       if (geminiKeys.length > 0) {
         selectedGemini = geminiKeys[keyIndex % geminiKeys.length];
