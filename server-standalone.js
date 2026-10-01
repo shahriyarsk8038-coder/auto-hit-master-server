@@ -42,17 +42,17 @@ const ENV_GROQ_KEYS = [];
 
 // Permanent Member Balances (Guaranteed from live verified screenshot - never lost or reset)
 const PERMANENT_ACTIVE_MEMBERS = [
-  { user_id: '01727096227', phone: '01727096227', name: 'Customer (01727096227)', credits: 95.5, expires_at: '2027-09-28 23:59:59', status: 'active', plan: 'credits' },
-  { user_id: '01734085110', phone: '01734085110', name: 'Customer (01734085110)', credits: 32.0, expires_at: '2027-09-05 23:59:59', status: 'active', plan: 'credits' },
+  { user_id: '01727096227', phone: '01727096227', name: 'Customer (01727096227)', credits: 77.5, expires_at: '2027-09-28 23:59:59', status: 'active', plan: 'credits' },
   { user_id: '01912380494', phone: '01912380494', name: 'Customer (01912380494)', credits: 20.0, expires_at: '2027-09-20 23:59:59', status: 'active', plan: 'credits' },
-  { user_id: '01854763044', phone: '01854763044', name: 'Customer (01854763044)', credits: 20.0, expires_at: '2027-09-20 23:59:59', status: 'active', plan: 'credits' },
-  { user_id: '01714017894', phone: '01714017894', name: 'MD ABIR (01714017894)', credits: 20.0, expires_at: '2027-09-20 23:59:59', status: 'active', plan: 'credits' },
   { user_id: '01859548058', phone: '01859548058', name: 'User 01859548058', credits: 17.6, expires_at: '2027-09-06 23:59:59', status: 'active', plan: 'credits' },
-  { user_id: '01626090081', phone: '01626090081', name: 'Customer (01626090081)', credits: 16.8, expires_at: '2027-09-28 23:59:59', status: 'active', plan: 'credits' },
-  { user_id: '01724704847', phone: '01724704847', name: 'Customer (01724704847)', credits: 15.0, expires_at: '2027-09-20 23:59:59', status: 'active', plan: 'credits' },
-  { user_id: '01719684949', phone: '01719684949', name: 'AMIT (01719684949)', credits: 28.6, expires_at: '2027-09-05 23:59:59', status: 'active', plan: 'credits' },
-  { user_id: '01735622221', phone: '01735622221', name: 'Customer (01735622221)', credits: 4.9, expires_at: '2027-09-04 23:59:59', status: 'active', plan: 'credits' },
-  { user_id: '0173562221', phone: '0173562221', name: 'User 0173562221', credits: 3.0, expires_at: '2027-09-04 23:59:59', status: 'active', plan: 'credits' }
+  { user_id: '01735622221', phone: '01735622221', name: 'Customer (01735622221)', credits: 16.1, payment_amount: '10', expires_at: '2027-09-04 23:59:59', status: 'active', plan: 'credits' },
+  { user_id: '01854763044', phone: '01854763044', name: 'Customer (01854763044)', credits: 14.8, expires_at: '2027-09-20 23:59:59', status: 'active', plan: 'credits' },
+  { user_id: '01734085110', phone: '01734085110', name: 'Customer (01734085110)', credits: 13.8, expires_at: '2027-09-05 23:59:59', status: 'active', plan: 'credits' },
+  { user_id: '01714017894', phone: '01714017894', name: 'MD ABIR (01714017894)', credits: 13.5, expires_at: '2027-09-20 23:59:59', status: 'active', plan: 'credits' },
+  { user_id: '01626090081', phone: '01626090081', name: 'Customer (01626090081)', credits: 10.2, expires_at: '2027-09-28 23:59:59', status: 'active', plan: 'credits' },
+  { user_id: '01719684949', phone: '01719684949', name: 'AMIT (01719684949)', credits: 9.6, payment_amount: '5', expires_at: '2027-09-05 23:59:59', status: 'active', plan: 'credits' },
+  { user_id: '01618288498', phone: '01618288498', name: 'User 01618288498', credits: 7.8, payment_amount: '21', expires_at: '2027-09-05 23:59:59', status: 'active', plan: 'credits' },
+  { user_id: '01745454656', phone: '01745454656', name: 'User 01745454656', credits: 3.0, expires_at: '2027-09-30 23:59:59', status: 'active', plan: 'credits' }
 ];
 
 if (!fs.existsSync(path.dirname(DB_FILE))) {
