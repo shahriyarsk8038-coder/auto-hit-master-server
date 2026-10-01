@@ -22,7 +22,7 @@ const PAYSTATION_PASSWORD = process.env.PAYSTATION_PASSWORD || 'hgfrsw@fxfxr5';
 const PAYSTATION_BASE_URL = 'https://api.paystation.com.bd';
 
 
-// Hardcoded base keys (7 Gemini + 1 Groq) to ensure never hitting rate limits even on fresh server deploy
+// Hardcoded base keys (9 Gemini) to ensure never hitting rate limits even on fresh server deploy
 const HARDCODED_GEMINI_KEYS = [
   'QVEuQWI4Uk42SlY0SThCUzZ4dGdMYWNhWS1GMzRlMXFRNXBvYkF3S0tZcWY5NmFHNGN1dlE=',
   'QVEuQWI4Uk42TGY3MjJlT2VicUVpWDNwT1BoS3JUMEstUlhCMzBaTzRyT1ZYLWRFd1dzYWc=',
@@ -34,13 +34,11 @@ const HARDCODED_GEMINI_KEYS = [
   'QVEuQWI4Uk42S2NFajVzaWJFb1hwV1FTWWduR3FVdm4zMGpXaXI2YzV4aGxIY0VERjY2aVE=',
   'QVEuQWI4Uk42S2tEUmtHcW5rUm5OajBSZ1Izd1EtUG04Q1Vkbk54SjQ2a3BKbEF1NDVGOEE='
 ].map(b => Buffer.from(b, 'base64').toString('utf8'));
-const HARDCODED_GROQ_KEYS = [
-  'Z3NrX3Z5c1FoZUlVcTExSmRUTFhsRWM0V0dkeWJyb1FZZ3lQdHNMUTBRM3dubWVKYm1saU5sVnFj'
-].map(b => Buffer.from(b, 'base64').toString('utf8'));
+const HARDCODED_GROQ_KEYS = [];
 
 // Read API keys from Render environment variables (permanent, never reset on redeploy)
 const ENV_GEMINI_KEYS = (process.env.GEMINI_KEYS || '').split(',').map(k => k.trim()).filter(k => k.length > 5);
-const ENV_GROQ_KEYS = (process.env.GROQ_KEYS || '').split(',').map(k => k.trim()).filter(k => k.length > 5);
+const ENV_GROQ_KEYS = [];
 
 // Permanent Member Balances (Guaranteed from live verified screenshot - never lost or reset)
 const PERMANENT_ACTIVE_MEMBERS = [
@@ -134,9 +132,8 @@ function loadDb() {
       HARDCODED_GEMINI_KEYS.forEach(k => gSet.add(k));
       data.settings.gemini_keys = Array.from(gSet);
     }
-    if (!Array.isArray(data.settings.groq_keys) || data.settings.groq_keys.length === 0) {
-      data.settings.groq_keys = HARDCODED_GROQ_KEYS.slice();
-    }
+    data.settings.groq_keys = [];
+    data.settings.default_provider = 'gemini';
 
     // Check persistent users backup file
     const USERS_BACKUP = path.join(__dirname, 'db', 'users_backup.json');
@@ -205,9 +202,6 @@ function loadDb() {
     // Permanent fallback from Render Environment Variables
     if ((!data.settings.gemini_keys || data.settings.gemini_keys.length === 0) && process.env.GEMINI_KEYS) {
       data.settings.gemini_keys = process.env.GEMINI_KEYS.split(/[\r\n,]+/).map(k => k.trim()).filter(k => k.length > 5);
-    }
-    if ((!data.settings.groq_keys || data.settings.groq_keys.length === 0) && process.env.GROQ_KEYS) {
-      data.settings.groq_keys = process.env.GROQ_KEYS.split(/[\r\n,]+/).map(k => k.trim()).filter(k => k.length > 5);
     }
     if (!data.settings.capmonster_key && process.env.CAPMONSTER_API_KEY) {
       data.settings.capmonster_key = process.env.CAPMONSTER_API_KEY.trim();
@@ -586,30 +580,21 @@ const server = http.createServer((req, res) => {
       const geminiKeys = ((settings.gemini_keys || []).filter(k => k && k.trim().length > 10).length > 0
         ? settings.gemini_keys.filter(k => k && k.trim().length > 10)
         : ENV_GEMINI_KEYS).filter(k => k && k.trim().length > 10);
-      const groqKeys = ((settings.groq_keys || []).filter(k => k && k.trim()).length > 0
-        ? settings.groq_keys
-        : ENV_GROQ_KEYS).filter(k => k && k.trim());
-
       let selectedGemini = '';
       if (geminiKeys.length > 0) {
         selectedGemini = geminiKeys[keyIndex % geminiKeys.length];
         keyIndex = (keyIndex + 1) % geminiKeys.length;
       }
 
-      let selectedGroq = '';
-      if (groqKeys.length > 0) {
-        selectedGroq = groqKeys[Math.floor(Math.random() * groqKeys.length)];
-      }
-
       return sendJson({
         success: true,
-        default_provider: settings.default_provider || 'gemini',
+        default_provider: 'gemini',
         gemini_key: selectedGemini,
         gemini_keys: geminiKeys,
-        groq_key: selectedGroq,
-        groq_keys: groqKeys,
+        groq_key: '',
+        groq_keys: [],
         total_gemini_keys: geminiKeys.length,
-        total_groq_keys: groqKeys.length
+        total_groq_keys: 0
       });
     }
     if (pathname === '/admin/payments') {
